@@ -1,0 +1,271 @@
+{
+  "_readme": "이 파일은 '성분명 -> (계열 · 대사 경로 · 별칭)' 기본 매핑이에요. import-fda-ndc.js 가 openFDA 상품(제품 정체성)과 이 파일(약리 분류)을 이어 붙이는 데 써요. openFDA 는 CYP450/킬레이트 같은 약리 데이터를 제공하지 않으므로, 이 파일의 내용은 전부 서온이 직접 정리한 것이고 FDA 데이터가 아니에요. 'reviewed: true' 인 14개 성분만 지난 턴에 cyp450_chelation_rules 시드와 함께 실제로 검토했고, 나머지는 drug_class(계열명)만 채워져 있고 metabolic_pathways 는 비어 있어요(추측하지 않았어요). 운영 전 도메인 전문가 검토를 권장해요. 이 파일에 없는 성분은 --include-unmapped 를 주지 않는 한 가져오지 않아요.",
+  "Furosemide": {
+    "nonproprietary_name": "Furosemide",
+    "aliases": [],
+    "drug_class": "loop diuretic",
+    "metabolic_pathways": {},
+    "reviewed": true
+  },
+  "Spironolactone": {
+    "nonproprietary_name": "Spironolactone",
+    "aliases": [],
+    "drug_class": "diuretic",
+    "metabolic_pathways": {},
+    "reviewed": false
+  },
+  "Torsemide": {
+    "nonproprietary_name": "Torsemide",
+    "aliases": [],
+    "drug_class": "diuretic",
+    "metabolic_pathways": {},
+    "reviewed": false
+  },
+  "Enrofloxacin": {
+    "nonproprietary_name": "Enrofloxacin",
+    "aliases": [],
+    "drug_class": "fluoroquinolone antibiotic",
+    "metabolic_pathways": {
+      "chelation": {
+        "binds": [
+          "calcium",
+          "magnesium",
+          "iron",
+          "copper",
+          "zinc"
+        ]
+      }
+    },
+    "reviewed": true
+  },
+  "Amoxicillin": {
+    "nonproprietary_name": "Amoxicillin",
+    "aliases": [],
+    "drug_class": "aminopenicillin antibiotic",
+    "metabolic_pathways": {},
+    "reviewed": true
+  },
+  "Cephalexin": {
+    "nonproprietary_name": "Cephalexin",
+    "aliases": [],
+    "drug_class": "cephalosporin antibiotic",
+    "metabolic_pathways": {},
+    "reviewed": true
+  },
+  "Metronidazole": {
+    "nonproprietary_name": "Metronidazole",
+    "aliases": [],
+    "drug_class": "nitroimidazole antimicrobial",
+    "metabolic_pathways": {},
+    "reviewed": true
+  },
+  "Prednisolone": {
+    "nonproprietary_name": "Prednisolone",
+    "aliases": [],
+    "drug_class": "corticosteroid",
+    "metabolic_pathways": {},
+    "reviewed": true
+  },
+  "Dexamethasone": {
+    "nonproprietary_name": "Dexamethasone",
+    "aliases": [],
+    "drug_class": "corticosteroid",
+    "metabolic_pathways": {},
+    "reviewed": false
+  },
+  "Methylprednisolone": {
+    "nonproprietary_name": "Methylprednisolone",
+    "aliases": [],
+    "drug_class": "corticosteroid",
+    "metabolic_pathways": {},
+    "reviewed": false
+  },
+  "Polysulfated GAG (Adequan)": {
+    "nonproprietary_name": "Polysulfated GAG (Adequan)",
+    "aliases": [],
+    "drug_class": "joint/disease-modifying agent",
+    "metabolic_pathways": {},
+    "reviewed": false
+  },
+  "Bedinvetmab (Librela)": {
+    "nonproprietary_name": "Bedinvetmab (Librela)",
+    "aliases": [],
+    "drug_class": "joint/disease-modifying agent",
+    "metabolic_pathways": {},
+    "reviewed": false
+  },
+  "Pentosan Polysulfate": {
+    "nonproprietary_name": "Pentosan Polysulfate",
+    "aliases": [],
+    "drug_class": "joint/disease-modifying agent",
+    "metabolic_pathways": {},
+    "reviewed": false
+  },
+  "Pimobendan": {
+    "nonproprietary_name": "Pimobendan",
+    "aliases": [],
+    "drug_class": "inodilator (PDE3 inhibitor / calcium sensitizer)",
+    "metabolic_pathways": {},
+    "reviewed": true
+  },
+  "Benazepril": {
+    "nonproprietary_name": "Benazepril",
+    "aliases": [],
+    "drug_class": "ACE inhibitor",
+    "metabolic_pathways": {},
+    "reviewed": true
+  },
+  "Amlodipine": {
+    "nonproprietary_name": "Amlodipine",
+    "aliases": [],
+    "drug_class": "cardiac medication",
+    "metabolic_pathways": {},
+    "reviewed": false
+  },
+  "Phenobarbital": {
+    "nonproprietary_name": "Phenobarbital",
+    "aliases": [],
+    "drug_class": "barbiturate anticonvulsant",
+    "metabolic_pathways": {},
+    "reviewed": true
+  },
+  "Potassium Bromide": {
+    "nonproprietary_name": "Potassium Bromide",
+    "aliases": [],
+    "drug_class": "anticonvulsant",
+    "metabolic_pathways": {},
+    "reviewed": false
+  },
+  "Levetiracetam": {
+    "nonproprietary_name": "Levetiracetam",
+    "aliases": [],
+    "drug_class": "anticonvulsant",
+    "metabolic_pathways": {},
+    "reviewed": false
+  },
+  "Warfarin": {
+    "nonproprietary_name": "Warfarin",
+    "aliases": [],
+    "drug_class": "vitamin K antagonist anticoagulant",
+    "metabolic_pathways": {},
+    "reviewed": true
+  },
+  "Clopidogrel": {
+    "nonproprietary_name": "Clopidogrel",
+    "aliases": [],
+    "drug_class": "antiplatelet (P2Y12 inhibitor)",
+    "metabolic_pathways": {},
+    "reviewed": true
+  },
+  "Rivaroxaban": {
+    "nonproprietary_name": "Rivaroxaban",
+    "aliases": [],
+    "drug_class": "anticoagulant/antiplatelet",
+    "metabolic_pathways": {},
+    "reviewed": false
+  },
+  "Omeprazole": {
+    "nonproprietary_name": "Omeprazole",
+    "aliases": [],
+    "drug_class": "gastrointestinal agent",
+    "metabolic_pathways": {},
+    "reviewed": false
+  },
+  "Famotidine": {
+    "nonproprietary_name": "Famotidine",
+    "aliases": [],
+    "drug_class": "gastrointestinal agent",
+    "metabolic_pathways": {},
+    "reviewed": false
+  },
+  "Metoclopramide": {
+    "nonproprietary_name": "Metoclopramide",
+    "aliases": [],
+    "drug_class": "gastrointestinal agent",
+    "metabolic_pathways": {},
+    "reviewed": false
+  },
+  "Sucralfate": {
+    "nonproprietary_name": "Sucralfate",
+    "aliases": [],
+    "drug_class": "gastrointestinal agent",
+    "metabolic_pathways": {},
+    "reviewed": false
+  },
+  "Carprofen": {
+    "nonproprietary_name": "Carprofen",
+    "aliases": [],
+    "drug_class": "NSAID",
+    "metabolic_pathways": {},
+    "reviewed": true
+  },
+  "Meloxicam": {
+    "nonproprietary_name": "Meloxicam",
+    "aliases": [],
+    "drug_class": "NSAID",
+    "metabolic_pathways": {},
+    "reviewed": true
+  },
+  "Firocoxib": {
+    "nonproprietary_name": "Firocoxib",
+    "aliases": [],
+    "drug_class": "NSAID",
+    "metabolic_pathways": {},
+    "reviewed": false
+  },
+  "Robenacoxib": {
+    "nonproprietary_name": "Robenacoxib",
+    "aliases": [],
+    "drug_class": "NSAID",
+    "metabolic_pathways": {},
+    "reviewed": false
+  },
+  "Cyclosporine": {
+    "nonproprietary_name": "Cyclosporine",
+    "aliases": [],
+    "drug_class": "immunomodulator/dermatologic agent",
+    "metabolic_pathways": {},
+    "reviewed": false
+  },
+  "Oclacitinib (Apoquel)": {
+    "nonproprietary_name": "Oclacitinib (Apoquel)",
+    "aliases": [],
+    "drug_class": "immunomodulator/dermatologic agent",
+    "metabolic_pathways": {},
+    "reviewed": false
+  },
+  "Lokivetmab (Cytopoint)": {
+    "nonproprietary_name": "Lokivetmab (Cytopoint)",
+    "aliases": [],
+    "drug_class": "immunomodulator/dermatologic agent",
+    "metabolic_pathways": {},
+    "reviewed": false
+  },
+  "Levothyroxine": {
+    "nonproprietary_name": "Levothyroxine",
+    "aliases": [],
+    "drug_class": "thyroid hormone",
+    "metabolic_pathways": {
+      "absorption": {
+        "impaired_by": [
+          "iron / copper / zinc minerals"
+        ]
+      }
+    },
+    "reviewed": true
+  },
+  "Trilostane": {
+    "nonproprietary_name": "Trilostane",
+    "aliases": [],
+    "drug_class": "hormone/endocrine agent",
+    "metabolic_pathways": {},
+    "reviewed": false
+  },
+  "Insulin Glargine": {
+    "nonproprietary_name": "Insulin Glargine",
+    "aliases": [],
+    "drug_class": "hormone/endocrine agent",
+    "metabolic_pathways": {},
+    "reviewed": false
+  }
+}
