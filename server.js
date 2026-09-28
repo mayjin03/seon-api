@@ -19,7 +19,7 @@ if (SUPABASE_URL && SUPABASE_KEY) {
   console.warn('[seon] Supabase credentials missing');
 }
 
-// DNI 금기 및 상호작용 규칙 데이터베이스 (성분 단위 매칭)
+// DNI 금기 및 상호작용 규칙 데이터베이스
 const DNI_RULES = [
   {
     ingredientKeywords: ['ENROFLOXACIN', 'CIPROFLOXACIN', 'MARBOFLOXACIN', 'DOXYCYCLINE'],
@@ -47,17 +47,17 @@ const DNI_RULES = [
   }
 ];
 
-// Supabase DB 실시간 약물 조회
+// 강화된 Supabase DB 실시간 약물 조회 함수
 async function lookupDrugFromDb(drugInput) {
-  if (!drugInput) return null;
+  if (!drugInput || !supabase) return null;
   const searchTerm = drugInput.trim();
-  if (!supabase) return null;
 
   try {
+    // 1차: 약물명, 성분명, NDC 코드, aliases 배열까지 광범위하게 ILIKE 검색
     const { data: dbMatches, error } = await supabase
       .from('fda_ndc_vet_dictionary')
       .select('*')
-      .or(`proprietary_name.ilike.%${searchTerm}%,nonproprietary_name.ilike.%${searchTerm}%,ndc_code.eq.${searchTerm}`);
+      .or(`proprietary_name.ilike.%${searchTerm}%,nonproprietary_name.ilike.%${searchTerm}%,ndc_code.ilike.%${searchTerm}%,aliases.cs.{"${searchTerm.toLowerCase()}"}`);
 
     if (!error && dbMatches && dbMatches.length > 0) {
       const matched = dbMatches[0];
@@ -68,7 +68,7 @@ async function lookupDrugFromDb(drugInput) {
         ndc_source: "openfda_db",
         ndc_verified: true,
         product_type: "VETERINARY",
-        proprietary_name: matched.proprietary_name,
+        proprietary_name: matched.proprietary_name || matched.nonproprietary_name,
         active_ingredients: matched.active_ingredients || []
       };
     }
@@ -79,13 +79,13 @@ async function lookupDrugFromDb(drugInput) {
   return null;
 }
 
-// 정밀 DNI 상호작용 검사 엔진
+// DNI 상호작용 검사 엔진
 function evaluateDniConflicts(prescriptions, supplements) {
   const conflicts = [];
 
   for (const rx of prescriptions) {
     const ingredients = rx.active_ingredients || [];
-    const rxName = rx.name.toUpperCase();
+    const rxName = (rx.name || '').toUpperCase();
 
     for (const ing of ingredients) {
       const ingName = (ing.name || '').toUpperCase();
@@ -151,7 +151,6 @@ app.post('/v1/analyze', async (req, res) => {
       })
     );
 
-    // 정밀 DNI 상호작용 분석 수행
     const conflicts = evaluateDniConflicts(analyzedPrescriptions, supplements);
     const conflictDetected = conflicts.length > 0;
 
@@ -180,5 +179,5 @@ app.post('/v1/analyze', async (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`[seon] DNI Engine Engine Active | Server running on port ${PORT}`);
+  console.log(`[seon] DNI Engine Active | Server running on port ${PORT}`);
 });
