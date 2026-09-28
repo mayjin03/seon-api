@@ -6,6 +6,30 @@ if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
   process.exit(1);
 }
 
+// fda_ndc_code_format 제약조건을 충족하도록 NDC 코드 포맷팅
+function formatToStandardNdc(rawNdc) {
+  if (!rawNdc) return null;
+  
+  // 이미 하이픈 2개가 들어간 정식 10/11자리 포맷 (예: 12345-678-90 또는 1234-5678-90)
+  if (/^\d{4,5}-\d{3,4}-\d{1,2}$/.test(rawNdc)) {
+    return rawNdc;
+  }
+
+  // 하이픈이 1개만 있는 경우 (예: 81471-693 -> 81471-693-00)
+  const digitsOnly = rawNdc.replace(/[^0-9]/g, '');
+  if (digitsOnly.length === 10) {
+    return `${digitsOnly.slice(0, 5)}-${digitsOnly.slice(5, 8)}-${digitsOnly.slice(8, 10)}`;
+  } else if (digitsOnly.length === 11) {
+    return `${digitsOnly.slice(0, 5)}-${digitsOnly.slice(5, 9)}-${digitsOnly.slice(9, 11)}`;
+  } else if (digitsOnly.length === 8) {
+    return `${digitsOnly.slice(0, 5)}-${digitsOnly.slice(5, 8)}-00`;
+  } else if (digitsOnly.length === 9) {
+    return `${digitsOnly.slice(0, 5)}-${digitsOnly.slice(5, 8)}-0${digitsOnly.slice(8, 9)}`;
+  }
+
+  return null;
+}
+
 async function run() {
   console.log("[1/3] openFDA 수의용 의약품 데이터 수집 중...");
   
@@ -22,7 +46,10 @@ async function run() {
   const map = new Map();
   for (const item of results) {
     const rawNdc = item.package_ndc || item.product_ndc || item.ndc_code;
-    if (!rawNdc) continue;
+    const validNdcCode = formatToStandardNdc(rawNdc);
+    
+    // DB fda_ndc_code_format 제약조건을 완벽히 충족하는 데이터만 추출
+    if (!validNdcCode) continue;
 
     const propName = item.proprietary_name || item.brand_name || item.generic_name || "Veterinary Drug";
     const nonPropName = item.nonproprietary_name || item.generic_name || propName;
@@ -37,9 +64,8 @@ async function run() {
       ingredients = [{ name: nonPropName, strength: '' }];
     }
 
-    // ndc_11은 DB에서 자동 생성되므로 전송 객체에서 완전히 제외
-    map.set(rawNdc, {
-      ndc_code: rawNdc,
+    map.set(validNdcCode, {
+      ndc_code: validNdcCode,
       proprietary_name: propName,
       nonproprietary_name: nonPropName,
       aliases: [propName.toLowerCase()],
@@ -48,7 +74,7 @@ async function run() {
   }
 
   const payload = Array.from(map.values());
-  console.log(`[2/3] 정제 완료된 데이터 ${payload.length}건을 Supabase DB로 전송합니다...`);
+  console.log(`[2/3] 포맷 검증을 통과한 유효 NDC 데이터 ${payload.length}건 전송 시작...`);
 
   const baseUrl = SUPABASE_URL.replace(/\/$/, '');
   const endpoint = `${baseUrl}/rest/v1/fda_ndc_vet_dictionary`;
@@ -78,7 +104,7 @@ async function run() {
     }
   }
 
-  console.log(`=== 성공: 총 ${inserted}건의 FDA 의약품 데이터가 Supabase DB에 최종 적재되었습니다! ===`);
+  console.log(`=== 성공: 총 ${inserted}건의 정식 FDA NDC 데이터가 Supabase DB에 최종 적재되었습니다! ===`);
 }
 
 run();
