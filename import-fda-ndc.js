@@ -9,7 +9,6 @@ if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
 async function run() {
   console.log("[1/3] openFDA 수의용 약물 수집 중...");
   
-  // openFDA API 호출
   const fdaRes = await fetch('https://api.fda.gov/drug/ndc.json?search=finished:true&limit=1000');
   if (!fdaRes.ok) {
     console.error("openFDA API 호출 실패:", fdaRes.status);
@@ -20,7 +19,6 @@ async function run() {
   const results = fdaData.results || [];
   console.log(`[+] openFDA에서 ${results.length}건 수신 완료.`);
 
-  // 데이터 가공 및 중복 제거
   const map = new Map();
   for (const item of results) {
     const rawNdc = item.package_ndc || item.product_ndc || item.ndc_code;
@@ -44,15 +42,13 @@ async function run() {
       nonproprietary_name: nonPropName,
       aliases: [propName.toLowerCase()],
       active_ingredients: ingredients,
-      vet_approved: true,
-      data_source: 'openfda_bulk'
+      vet_approved: true
     });
   }
 
   const payload = Array.from(map.values());
-  console.log(`[2/3] 정제된 데이터 ${payload.length}건을 Supabase REST API로 직접 전송합니다...`);
+  console.log(`[2/3] 정제된 데이터 ${payload.length}건을 Supabase DB로 직접 전송합니다...`);
 
-  // Supabase REST API 직접 호출 (POST ignore-duplicates)
   const endpoint = `${SUPABASE_URL.replace(/\/$/, '')}/rest/v1/fda_ndc_vet_dictionary`;
   
   const batchSize = 100;
@@ -80,7 +76,7 @@ async function run() {
     }
   }
 
-  console.log(`=== 완료: 총 ${inserted}건의 데이터가 Supabase DB에 저장되었습니다! ===`);
+  console.log(`=== 성공: 총 ${inserted}건의 데이터가 Supabase DB에 적재되었습니다! ===`);
 }
 
 run();
