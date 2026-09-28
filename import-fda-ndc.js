@@ -2,12 +2,12 @@ const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
-  console.error("CRITICAL: SUPABASE_URL 또는 SUPABASE_SERVICE_ROLE_KEY가 없습니다.");
+  console.error("CRITICAL: SUPABASE_URL 또는 SUPABASE_SERVICE_ROLE_KEY가 설정되지 않았습니다.");
   process.exit(1);
 }
 
 async function run() {
-  console.log("[1/3] openFDA 수의용 약물 수집 중...");
+  console.log("[1/3] openFDA 수의용 의약품 데이터 수집 중...");
   
   const fdaRes = await fetch('https://api.fda.gov/drug/ndc.json?search=finished:true&limit=1000');
   if (!fdaRes.ok) {
@@ -29,27 +29,31 @@ async function run() {
     const nonPropName = item.nonproprietary_name || item.generic_name || propName;
 
     let ingredients = [];
-    if (Array.isArray(item.active_ingredients)) {
-      ingredients = item.active_ingredients.map(i => ({ name: i.name, strength: i.strength || '' }));
+    if (Array.isArray(item.active_ingredients) && item.active_ingredients.length > 0) {
+      ingredients = item.active_ingredients.map(i => ({ 
+        name: i.name || nonPropName, 
+        strength: i.strength || '' 
+      }));
     } else {
       ingredients = [{ name: nonPropName, strength: '' }];
     }
 
+    // Supabase fda_ndc_vet_dictionary 테이블의 스키마와 100% 일치하는 객체 생성
     map.set(cleanNdc11, {
       ndc_code: rawNdc,
       ndc_11: cleanNdc11,
       proprietary_name: propName,
       nonproprietary_name: nonPropName,
       aliases: [propName.toLowerCase()],
-      active_ingredients: ingredients,
-      vet_approved: true
+      active_ingredients: ingredients
     });
   }
 
   const payload = Array.from(map.values());
-  console.log(`[2/3] 정제된 데이터 ${payload.length}건을 Supabase DB로 직접 전송합니다...`);
+  console.log(`[2/3] 정제 완료된 데이터 ${payload.length}건을 Supabase DB로 전송합니다...`);
 
-  const endpoint = `${SUPABASE_URL.replace(/\/$/, '')}/rest/v1/fda_ndc_vet_dictionary`;
+  const baseUrl = SUPABASE_URL.replace(/\/$/, '');
+  const endpoint = `${baseUrl}/rest/v1/fda_ndc_vet_dictionary`;
   
   const batchSize = 100;
   let inserted = 0;
@@ -76,7 +80,7 @@ async function run() {
     }
   }
 
-  console.log(`=== 성공: 총 ${inserted}건의 데이터가 Supabase DB에 적재되었습니다! ===`);
+  console.log(`=== 성공: 총 ${inserted}건의 FDA 의약품 데이터가 Supabase DB에 최종 적재되었습니다! ===`);
 }
 
 run();
