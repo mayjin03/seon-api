@@ -1,32 +1,65 @@
 #!/usr/bin/env node
 'use strict';
 /* ============================================================================
-   SEON (서온) · Standalone B2B API Server
+   SEON (서온) · Standalone B2B API Server  v1.1  (Supabase 연동)
    ----------------------------------------------------------------------------
    POST /v1/analyze  — Pet Bio + Prescriptions + Supplements  ->  B2B RAW JSON
    GET  /health      — liveness probe
 
-   실행:   npm install && npm start            (기본 포트 3000)
+   실행:   npm install && npm start            (Node 22 이상 · 기본 포트 3000)
    호출:   curl -X POST http://localhost:3000/v1/analyze \
              -H "X-SEON-API-KEY: seon_demo_pk_sandbox_key" -H "Content-Type: application/json" \
              -d '{"pet_bio":{"breed":"말티즈","weight_kg":4.2,"age_years":10,"bcs":5,"conditions":["kidney"]},
                   "prescriptions":[{"name":"Enrofloxacin","frequency_per_day":2}],
                   "supplements":["칼슘/킬레이트 칼슘"]}'
 
-   환경 변수 (모두 선택)
-     PORT                 리스닝 포트 (기본 3000)
-     CORS_ORIGIN          허용 Origin, 콤마로 여러 개 (기본 * = 전체 허용)
-     SEON_API_KEYS        프로덕션 API Key 목록, 콤마 구분 (예: key_a,key_b)
-     ALLOW_DEMO_KEYS      'false'면 seon_demo_pk_ 로 시작하는 Sandbox 키를 거부 (기본 허용)
-     RATE_LIMIT_PER_MIN   키당 분당 요청 한도 (기본 60)
-     BODY_LIMIT           JSON 본문 최대 크기 (기본 100kb)
+   ── Supabase 연동 ───────────────────────────────────────────────────────────
+   1) API Key 검증  : X-SEON-API-KEY 가 public.b2b_poc_requests.sandbox_api_key 에 있으면 유효한 키예요.
+                      (Enterprise PoC 폼이 발급·저장한 키. 행을 삭제하면 캐시 만료(기본 60초) 후 차단돼요.)
+   2) 분석 이력 저장 : 분석이 성공(200)할 때마다 결과 JSON 과 latency_ms 를 이력 테이블에 INSERT 해요.
+                      응답을 보낸 '뒤에' 비동기로 저장하므로 API 응답 속도에 영향이 없고, 저장이 실패해도 API 는 정상 응답해요.
+   ※ 서버는 반드시 service_role 키로 접속해요(RLS 우회). 이 키는 서버 환경 변수에만 두고, 웹앱/브라우저 코드에 절대 넣지 마세요.
+
+   필요한 SQL (Supabase SQL Editor 에서 한 번 실행)
+     -- 키 조회 속도용 (b2b_poc_requests 는 PoC 폼이 이미 사용 중인 테이블)
+     create index if not exists b2b_poc_requests_key_idx on public.b2b_poc_requests (sandbox_api_key);
+
+     -- 분석 이력 테이블
+     create table if not exists public.b2b_analysis_history (
+       id            bigint generated always as identity primary key,
+       request_id    text        not null,
+       api_key_hash  text        not null,   -- sha256(API Key). 원문 키는 저장하지 않아요.
+       api_key_hint  text,                   -- 예: seon…7890 (식별용 일부)
+       key_source    text        not null,   -- demo | env | db
+       latency_ms    integer     not null,
+       response_json jsonb       not null,   -- 클라이언트에 돌려준 응답 JSON 전체
+       created_at    timestamptz not null default now()
+     );
+     create index if not exists b2b_analysis_history_key_idx on public.b2b_analysis_history (api_key_hash, created_at desc);
+     alter table public.b2b_analysis_history enable row level security;  -- 정책 없음 = service_role 만 접근
+
+   환경 변수 (모두 선택 — Supabase 를 쓰려면 앞의 두 개는 필수)
+     SUPABASE_URL                  예: https://xxxx.supabase.co
+     SUPABASE_SERVICE_ROLE_KEY     service_role 키 (서버 전용 비밀값)
+     ANALYSIS_HISTORY_TABLE        이력 테이블 이름 (기본 b2b_analysis_history)
+     PORT                          리스닝 포트 (기본 3000)
+     CORS_ORIGIN                   허용 Origin, 콤마로 여러 개 (기본 * = 전체 허용)
+     SEON_API_KEYS                 프로덕션 API Key 목록, 콤마 구분 (DB 조회 없이 바로 통과)
+     DEMO_API_KEYS                 데모 키 목록 (기본 seon_demo_pk_sandbox_key) — DB 조회 없이 항상 통과
+     ALLOW_DEMO_KEYS               'false'면 데모 키 fallback 전체를 끔 (기본 허용)
+     ALLOW_DEMO_PREFIX_KEYS        'true'면 seon_demo_pk_ 로 시작하는 '모든' 키를 통과시킴 (기본 false)
+                                   ※ Supabase 가 설정되지 않은 경우엔 예전 동작대로 자동으로 켜져요(경고 로그 출력).
+     KEY_CACHE_TTL_S               유효 키 캐시 시간 (기본 60)   /  KEY_NEG_CACHE_TTL_S  무효 키 캐시 (기본 10)
+     AUTH_LOOKUPS_PER_MIN          IP당 분당 DB 키 조회 한도 (기본 30) — 무작위 키 대입 공격 방어
+     DB_TIMEOUT_MS                 Supabase 요청 타임아웃 (기본 3000)
+     RATE_LIMIT_PER_MIN            키당 분당 요청 한도 (기본 60)
+     BODY_LIMIT                    JSON 본문 최대 크기 (기본 100kb)
 
    연산 엔진에 대하여
      아래 'SEON ENGINE' 블록은 서온 웹앱(dogdiet-plan.html)의 실제 연산 코드
      (computeHealthScore · computeOrganBurden · DNI_MOLECULE_RULES · Sandbox 브리지)를
      구문 분석기(acorn)로 '그대로' 추출한 것이에요. 다시 작성한 근사 로직이 아니라서,
-     같은 요청에 대해 Live API Sandbox와 동일한 값을 반환해요(34개 케이스로 대조 검증).
-     웹앱의 엔진 코드를 바꾸면 이 블록도 다시 추출해야 값이 어긋나지 않아요.
+     같은 요청에 대해 웹앱과 동일한 값을 반환해요. 웹앱의 엔진 코드를 바꾸면 이 블록도 다시 추출해야 해요.
      이 블록은 직접 손으로 고치지 마세요.
 
    ※ 모든 출력은 진단·처방을 대체하지 않는 비진단(Non-Diagnostic) 의사결정 보조 신호예요.
@@ -35,6 +68,7 @@
 const crypto = require('crypto');
 const express = require('express');
 const cors = require('cors');
+const { createClient } = require('@supabase/supabase-js');
 
 /* ================= SEON ENGINE (웹앱에서 추출 · 수정 금지) ================= */
 const ENGINE = (function(){
@@ -866,6 +900,7 @@ const ENGINE = (function(){
 /* ================= /SEON ENGINE ================= */
 
 /* ---------------- 설정 ---------------- */
+const intEnv = (name, def) => { const n = parseInt(process.env[name], 10); return Number.isFinite(n) && n >= 0 ? n : def; };
 const PORT = parseInt(process.env.PORT, 10) || 3000;
 const RATE_LIMIT = parseInt(process.env.RATE_LIMIT_PER_MIN, 10) || 60;
 const BODY_LIMIT = process.env.BODY_LIMIT || '100kb';
@@ -873,11 +908,78 @@ const ALLOW_DEMO_KEYS = String(process.env.ALLOW_DEMO_KEYS || 'true').toLowerCas
 const CORS_ORIGINS = (process.env.CORS_ORIGIN || '*').split(',').map(s => s.trim()).filter(Boolean);
 const MAX_PRESCRIPTIONS = 20;
 const MAX_SUPPLEMENTS = 30;
+
+const SUPABASE_URL = (process.env.SUPABASE_URL || '').trim();
+const SUPABASE_SERVICE_KEY = (process.env.SUPABASE_SERVICE_ROLE_KEY || '').trim();
+const KEYS_TABLE = 'b2b_poc_requests';
+const KEYS_COLUMN = 'sandbox_api_key';
+const HISTORY_TABLE = /^[A-Za-z_][A-Za-z0-9_]{0,62}$/.test(process.env.ANALYSIS_HISTORY_TABLE || '') ? process.env.ANALYSIS_HISTORY_TABLE : 'b2b_analysis_history';
+const HISTORY_COLUMNS = ['request_id', 'api_key_hash', 'api_key_hint', 'key_source', 'latency_ms', 'response_json'];
+const DB_TIMEOUT_MS = intEnv('DB_TIMEOUT_MS', 3000) || 3000;
+const KEY_CACHE_TTL_MS = intEnv('KEY_CACHE_TTL_S', 60) * 1000;
+const KEY_NEG_CACHE_TTL_MS = intEnv('KEY_NEG_CACHE_TTL_S', 10) * 1000;
+const AUTH_LOOKUPS_PER_MIN = intEnv('AUTH_LOOKUPS_PER_MIN', 30);
+const KEY_CACHE_MAX = 5000;
+const DB_KEY_FORMAT = /^[A-Za-z0-9._-]{8,128}$/; // DB 조회 전 형식 검사 (이상한 문자열은 DB까지 보내지 않아요)
+
 const sha = v => crypto.createHash('sha256').update(String(v)).digest();
 const PROD_KEY_HASHES = (process.env.SEON_API_KEYS || '').split(',').map(s => s.trim()).filter(Boolean).map(sha);
+const DEMO_KEY_HASHES = (process.env.DEMO_API_KEYS || 'seon_demo_pk_sandbox_key').split(',').map(s => s.trim()).filter(Boolean).map(sha);
 const ENGINE_INTERNAL_KEY = ENGINE.SEON_DEMO_KEY_PREFIX + 'server'; // 엔진 내부 검증용 (인증은 아래 미들웨어에서 수행)
-
 const NOTICE = 'Non-diagnostic clinical decision-support signal (FDA/CVM aligned). Final diagnosis and prescribing decisions belong to a licensed veterinarian.';
+
+/* ---------------- Supabase ---------------- */
+// Supabase 요청이 멈춰도 API 가 같이 멈추지 않도록 모든 DB 호출에 타임아웃을 걸어요.
+function timeoutFetch(input, init){
+  init = init || {};
+  const t = AbortSignal.timeout(DB_TIMEOUT_MS);
+  const signal = init.signal && AbortSignal.any ? AbortSignal.any([init.signal, t]) : t;
+  return fetch(input, Object.assign({}, init, { signal }));
+}
+let supabase = null;
+if(SUPABASE_URL && SUPABASE_SERVICE_KEY){
+  try{
+    supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY, {
+      auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+      global: { fetch: timeoutFetch },
+    });
+  }catch(e){
+    console.error('[seon] Supabase 클라이언트를 만들 수 없어요 (SUPABASE_URL 형식을 확인하세요):', e.message);
+  }
+}
+const DB_ENABLED = !!supabase;
+// 데모 키 fallback: 기본은 '지정된 데모 키(DEMO_API_KEYS)'만. Supabase 미설정 시엔 예전처럼 seon_demo_pk_* 전체를 허용해요.
+const ALLOW_DEMO_PREFIX_KEYS = String(process.env.ALLOW_DEMO_PREFIX_KEYS || 'false').toLowerCase() === 'true' || !DB_ENABLED;
+
+const dbState = { keyLookup: 'unknown', history: 'unknown' }; // 'unknown' | 'ok' | 'error'
+const dbStatus = () => !DB_ENABLED ? 'not_configured' : (dbState.keyLookup === 'error' || dbState.history === 'error') ? 'degraded' : 'ok';
+const lastLogAt = new Map();
+function logThrottled(id, message){ // 같은 오류가 폭주해도 1분에 한 번만 기록해요
+  const now = Date.now();
+  if(now - (lastLogAt.get(id) || 0) < 60000) return;
+  lastLogAt.set(id, now);
+  console.error('[seon] ' + message);
+}
+const dbErrText = e => (e && e.code ? `[${e.code}] ` : '') + (e && e.message ? e.message : String(e)) + (e && e.hint ? ` (hint: ${e.hint})` : '');
+
+/* 시작할 때 테이블/컬럼이 실제로 맞는지 확인해요 — 이름이 어긋나면("Could not find the … column") 바로 로그로 알려줘요. */
+async function verifySchema(){
+  const checks = [[KEYS_TABLE, KEYS_COLUMN, 'keyLookup'], [HISTORY_TABLE, HISTORY_COLUMNS.join(','), 'history']];
+  for(const [table, cols, stateKey] of checks){
+    try{
+      const { error } = await supabase.from(table).select(cols).limit(0).retry(false);
+      if(error){
+        dbState[stateKey] = 'error';
+        console.error(`[seon] DB 점검 실패 — "${table}" (${cols}): ${dbErrText(error)}  → server.js 상단의 SQL 을 실행했는지 확인하세요.`);
+      }else{
+        dbState[stateKey] = 'ok';
+      }
+    }catch(e){
+      dbState[stateKey] = 'error';
+      console.error(`[seon] DB 점검 실패 — "${table}": ${dbErrText(e)}`);
+    }
+  }
+}
 
 /* ---------------- 유틸 ---------------- */
 const reqId = () => 'req_srv_' + crypto.randomBytes(5).toString('hex');
@@ -886,11 +988,66 @@ function sendError(res, http, message, extra){
   res.set('X-SEON-Request-Id', id);
   return res.status(http).json(Object.assign({ status: 'ERROR', code: http, message, request_id: id }, extra || {}));
 }
-function isValidKey(key){
-  if(!key || typeof key !== 'string') return false;
-  if(ALLOW_DEMO_KEYS && key.startsWith(ENGINE.SEON_DEMO_KEY_PREFIX) && key.length > ENGINE.SEON_DEMO_KEY_PREFIX.length) return true;
-  const h = sha(key);
-  return PROD_KEY_HASHES.some(p => crypto.timingSafeEqual(p, h)); // 타이밍 공격 방지
+const keyHint = key => key.length >= 12 ? key.slice(0, 4) + '…' + key.slice(-4) : '***';
+
+/* ---------------- API Key 검증 ---------------- */
+// 유효 키 / 무효 키 캐시 (키 해시 기준). DB 장애(503)는 캐시하지 않아요 — 복구되면 바로 정상 동작하도록.
+const keyCache = new Map(); // hashHex -> { ok, exp }
+function cacheGet(hex){
+  const c = keyCache.get(hex);
+  if(!c) return null;
+  if(Date.now() >= c.exp){ keyCache.delete(hex); return null; }
+  return c;
+}
+function cacheSet(hex, ok){
+  const ttl = ok ? KEY_CACHE_TTL_MS : KEY_NEG_CACHE_TTL_MS;
+  if(ttl <= 0) return;
+  if(keyCache.size >= KEY_CACHE_MAX) keyCache.delete(keyCache.keys().next().value); // 가장 오래된 항목부터 제거
+  keyCache.set(hex, { ok, exp: Date.now() + ttl });
+}
+const lookupWindows = new Map(); // ip -> { count, reset } : DB 조회가 일어나는 시도만 셈
+function lookupAllowed(ip){
+  const now = Date.now();
+  let w = lookupWindows.get(ip);
+  if(!w || now >= w.reset){ w = { count: 0, reset: now + 60000 }; lookupWindows.set(ip, w); }
+  w.count++;
+  return w.count <= AUTH_LOOKUPS_PER_MIN;
+}
+async function keyExistsInDb(key){
+  // .retry(false): postgrest-js 는 GET 을 실패 시 최대 3회(1s·2s·4s 대기) 자동 재시도해요. 그러면 DB 장애 때 API 요청이 수 초~수십 초 붙잡히므로 끄고, 빨리 503 으로 알려요.
+  const { data, error } = await supabase.from(KEYS_TABLE).select(KEYS_COLUMN).eq(KEYS_COLUMN, key).limit(1).retry(false);
+  if(error) throw new Error(dbErrText(error));
+  return Array.isArray(data) && data.length > 0;
+}
+
+/* 반환: { ok:true, source, keyHash, keyHint } | { ok:false, reason:'invalid' | 'unavailable' | 'throttled' } */
+async function resolveKey(key, ip){
+  if(!key || typeof key !== 'string' || key.length > 256) return { ok: false, reason: 'invalid' };
+  const digest = sha(key);
+  const keyHash = digest.toString('hex');
+  const good = source => ({ ok: true, source, keyHash, keyHint: keyHint(key) });
+  const matches = list => list.some(h => crypto.timingSafeEqual(h, digest)); // 타이밍 공격 방지
+
+  // ① 데모 키 fallback — DB 를 조회하지 않아요.
+  if(ALLOW_DEMO_KEYS && matches(DEMO_KEY_HASHES)) return good('demo');
+  if(ALLOW_DEMO_KEYS && ALLOW_DEMO_PREFIX_KEYS && key.startsWith(ENGINE.SEON_DEMO_KEY_PREFIX) && key.length > ENGINE.SEON_DEMO_KEY_PREFIX.length) return good('demo');
+  // ② 환경 변수의 프로덕션 키 — DB 를 조회하지 않아요.
+  if(matches(PROD_KEY_HASHES)) return good('env');
+  // ③ Supabase b2b_poc_requests 에 저장된 키
+  if(!DB_ENABLED || !DB_KEY_FORMAT.test(key)) return { ok: false, reason: 'invalid' };
+  const cached = cacheGet(keyHash);
+  if(cached) return cached.ok ? good('db') : { ok: false, reason: 'invalid' };
+  if(!lookupAllowed(ip || 'unknown')) return { ok: false, reason: 'throttled' };
+  try{
+    const exists = await keyExistsInDb(key);
+    dbState.keyLookup = 'ok';
+    cacheSet(keyHash, exists);
+    return exists ? good('db') : { ok: false, reason: 'invalid' };
+  }catch(e){
+    dbState.keyLookup = 'error';
+    logThrottled('key-lookup', `API Key 조회 실패 (${KEYS_TABLE}.${KEYS_COLUMN}): ${e.message}`);
+    return { ok: false, reason: 'unavailable' }; // fail-closed: 확인할 수 없는 키는 통과시키지 않아요.
+  }
 }
 
 /* ---------------- 앱 ---------------- */
@@ -908,19 +1065,40 @@ app.use(cors({
 app.use(express.json({ limit: BODY_LIMIT }));
 
 /* ---------------- 인증 + Rate Limit (/v1/*) ---------------- */
-const windows = new Map(); // key -> { count, reset }
-setInterval(() => { const now = Date.now(); for(const [k, w] of windows) if(now >= w.reset) windows.delete(k); }, 60000).unref();
+const windows = new Map(); // keyHash -> { count, reset }
+setInterval(() => {
+  const now = Date.now();
+  for(const [k, w] of windows) if(now >= w.reset) windows.delete(k);
+  for(const [k, w] of lookupWindows) if(now >= w.reset) lookupWindows.delete(k);
+  for(const [k, c] of keyCache) if(now >= c.exp) keyCache.delete(k);
+}, 60000).unref();
 
-function authenticate(req, res, next){
-  const key = req.get('X-SEON-API-KEY');
-  if(!isValidKey(key)){
+async function authenticate(req, res, next){
+  let auth;
+  try{
+    auth = await resolveKey(req.get('X-SEON-API-KEY'), req.ip);
+  }catch(e){
+    console.error('[seon] auth failure:', e);
+    return sendError(res, 500, 'Internal server error');
+  }
+  if(!auth.ok){
+    if(auth.reason === 'unavailable'){
+      res.set('Retry-After', '5');
+      return sendError(res, 503, 'API key verification is temporarily unavailable', { fallback: '잠시 후 다시 시도하거나 직전 응답을 유지하세요.' });
+    }
+    if(auth.reason === 'throttled'){
+      res.set('Retry-After', '30');
+      return sendError(res, 429, 'Too many API key verification attempts', { fallback: '잠시 후 다시 시도해주세요.' });
+    }
     return sendError(res, 401, 'Invalid or missing X-SEON-API-KEY', {
       fallback: '키를 재확인하고, 위젯은 경고 없이 기본 화면으로 폴백하세요.',
     });
   }
+  req.seon = auth;
+
   const now = Date.now();
-  let w = windows.get(key);
-  if(!w || now >= w.reset){ w = { count: 0, reset: now + 60000 }; windows.set(key, w); }
+  let w = windows.get(auth.keyHash);
+  if(!w || now >= w.reset){ w = { count: 0, reset: now + 60000 }; windows.set(auth.keyHash, w); }
   w.count++;
   res.set('X-RateLimit-Limit', String(RATE_LIMIT));
   res.set('X-RateLimit-Remaining', String(Math.max(0, RATE_LIMIT - w.count)));
@@ -933,16 +1111,37 @@ function authenticate(req, res, next){
   next();
 }
 
+/* ---------------- 분석 이력 저장 ---------------- */
+const pendingWrites = new Set(); // 종료 시 마무리할 진행 중 INSERT
+function recordAnalysis(auth, body){
+  if(!supabase) return;
+  const row = {
+    request_id: body.request_id,
+    api_key_hash: auth.keyHash,
+    api_key_hint: auth.keyHint,
+    key_source: auth.source,
+    latency_ms: Math.max(0, Math.round(Number(body.latency_ms) || 0)),
+    response_json: body,
+  };
+  const fail = msg => { dbState.history = 'error'; logThrottled('history-insert', `분석 이력 저장 실패 (${HISTORY_TABLE}): ${msg}`); };
+  const p = Promise.resolve()
+    .then(() => supabase.from(HISTORY_TABLE).insert(row))
+    .then(({ error }) => { if(error) fail(dbErrText(error)); else dbState.history = 'ok'; })
+    .catch(e => fail(dbErrText(e)))
+    .finally(() => pendingWrites.delete(p));
+  pendingWrites.add(p);
+}
+
 /* ---------------- Routes ---------------- */
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', service: 'seon-api-server', uptime_s: Math.round(process.uptime()) });
+  res.json({ status: 'ok', service: 'seon-api-server', uptime_s: Math.round(process.uptime()), db: dbStatus() });
 });
 
 app.post('/v1/analyze', authenticate, (req, res) => {
   if(!req.is('application/json')) return sendError(res, 415, 'Content-Type must be application/json');
   const body = req.body && typeof req.body === 'object' ? req.body : {};
 
-  // pet_bio 가 표준 필드명이에요. Live API Sandbox가 쓰는 'pet' 도 별칭으로 받아요.
+  // pet_bio 가 표준 필드명이에요. Live API Sandbox가 쓰던 'pet' 도 별칭으로 받아요.
   const usedLegacyName = body.pet_bio === undefined && body.pet !== undefined;
   const fieldName = usedLegacyName ? 'pet' : 'pet_bio';
   const petBio = usedLegacyName ? body.pet : body.pet_bio;
@@ -977,6 +1176,7 @@ app.post('/v1/analyze', authenticate, (req, res) => {
   }
   out.meta = Object.assign({}, out.meta, { served_by: 'seon-api-server', notice: NOTICE });
   res.status(200).json(out);
+  setImmediate(() => recordAnalysis(req.seon, out)); // 응답을 보낸 뒤 저장 — 성공(200)한 분석만 기록해요.
 });
 
 app.all('/v1/analyze', (req, res) => { res.set('Allow', 'POST, OPTIONS'); sendError(res, 405, 'Method not allowed. Use POST /v1/analyze'); });
@@ -993,9 +1193,20 @@ app.use((err, req, res, next) => {
 if(require.main === module){
   const server = app.listen(PORT, () => {
     console.log(`[seon] API server listening on :${PORT}  (POST /v1/analyze · GET /health)`);
-    console.log(`[seon] CORS: ${CORS_ORIGINS.join(', ')} | demo keys: ${ALLOW_DEMO_KEYS ? 'allowed' : 'blocked'} | prod keys: ${PROD_KEY_HASHES.length} | limit: ${RATE_LIMIT}/min`);
+    console.log(`[seon] CORS: ${CORS_ORIGINS.join(', ')} | limit: ${RATE_LIMIT}/min | env prod keys: ${PROD_KEY_HASHES.length}`);
+    if(DB_ENABLED){
+      console.log(`[seon] Supabase: connected (keys: ${KEYS_TABLE}.${KEYS_COLUMN} · history: ${HISTORY_TABLE}) | demo keys: ${!ALLOW_DEMO_KEYS ? 'blocked' : ALLOW_DEMO_PREFIX_KEYS ? 'any seon_demo_pk_*' : 'only DEMO_API_KEYS'}`);
+      verifySchema();
+    }else{
+      console.warn('[seon] WARNING: SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY 가 없어 DB 키 검증과 분석 이력 저장이 꺼져 있어요.' + (ALLOW_DEMO_KEYS ? ' 예전 동작대로 seon_demo_pk_* 키를 모두 허용해요.' : ''));
+    }
   });
-  const stop = () => server.close(() => process.exit(0));
+  // 배포(SIGTERM) 시 진행 중인 이력 INSERT 를 최대 3초까지 마무리하고 종료해요.
+  const stop = async () => {
+    server.close();
+    await Promise.race([Promise.allSettled([...pendingWrites]), new Promise(r => setTimeout(r, 3000))]);
+    process.exit(0);
+  };
   process.on('SIGTERM', stop);
   process.on('SIGINT', stop);
 }
