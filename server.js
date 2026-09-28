@@ -8,7 +8,6 @@ const PORT = process.env.PORT || 10000;
 app.use(cors());
 app.use(express.json());
 
-// Supabase 클라이언트 연결
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY;
 
@@ -20,11 +19,38 @@ if (SUPABASE_URL && SUPABASE_KEY) {
   console.warn('[seon] Supabase credentials missing');
 }
 
-// Supabase DB fda_ndc_vet_dictionary 실시간 조회 함수
+// DNI 금기 및 상호작용 규칙 데이터베이스 (성분 단위 매칭)
+const DNI_RULES = [
+  {
+    ingredientKeywords: ['ENROFLOXACIN', 'CIPROFLOXACIN', 'MARBOFLOXACIN', 'DOXYCYCLINE'],
+    supplementKeywords: ['칼슘', '마그네슘', '철분', '아연', 'CALCIUM', 'MAGNESIUM', 'IRON', 'ZINC'],
+    severity: 'HIGH',
+    type: 'CHELATION_ABSORPTION_REDUCTION',
+    message_ko: '다가 양이온(칼슘/마그네슘/철분) 영양제와 동시 급여 시 약물 흡수율이 크게 저하됩니다. 최소 2시간 간격을 두고 급여하세요.',
+    action: 'SEPARATE_TIME_2HRS'
+  },
+  {
+    ingredientKeywords: ['BENAZEPRIL', 'ENALAPRIL', 'SPIRONOLACTONE'],
+    supplementKeywords: ['칼륨', 'POTASSIUM'],
+    severity: 'HIGH',
+    type: 'HYPERKALEMIA_RISK',
+    message_ko: 'ACE 억제제/보존성 이뇨제 성분과 칼륨 보충제 동시 급여 시 고칼륨혈증 위험이 유발될 수 있습니다. 모니터링이 필요합니다.',
+    action: 'CONTRAINDICATED'
+  },
+  {
+    ingredientKeywords: ['WARFARIN', 'CLOPIDOGREL', 'ASPIRIN'],
+    supplementKeywords: ['오메가3', '비타민E', 'OMEGA-3', 'OMEGA3', 'VITAMIN E'],
+    severity: 'MEDIUM',
+    type: 'BLEEDING_RISK',
+    message_ko: '항응고제/항혈소판제 성분과 고용량 오메가3 또는 비타민E 동시 급여 시 출혈 경향이 증가할 수 있습니다.',
+    action: 'MONITOR_BLEEDING'
+  }
+];
+
+// Supabase DB 실시간 약물 조회
 async function lookupDrugFromDb(drugInput) {
   if (!drugInput) return null;
   const searchTerm = drugInput.trim();
-
   if (!supabase) return null;
 
   try {
@@ -43,7 +69,7 @@ async function lookupDrugFromDb(drugInput) {
         ndc_verified: true,
         product_type: "VETERINARY",
         proprietary_name: matched.proprietary_name,
-        active_ingredients: matched.active_ingredients
+        active_ingredients: matched.active_ingredients || []
       };
     }
   } catch (err) {
@@ -53,12 +79,47 @@ async function lookupDrugFromDb(drugInput) {
   return null;
 }
 
-// 헬스체크 엔드포인트
+// 정밀 DNI 상호작용 검사 엔진
+function evaluateDniConflicts(prescriptions, supplements) {
+  const conflicts = [];
+
+  for (const rx of prescriptions) {
+    const ingredients = rx.active_ingredients || [];
+    const rxName = rx.name.toUpperCase();
+
+    for (const ing of ingredients) {
+      const ingName = (ing.name || '').toUpperCase();
+
+      for (const supp of supplements) {
+        const suppName = (typeof supp === 'string' ? supp : supp.name || '').toUpperCase();
+
+        for (const rule of DNI_RULES) {
+          const matchIng = rule.ingredientKeywords.some(k => ingName.includes(k) || rxName.includes(k));
+          const matchSupp = rule.supplementKeywords.some(k => suppName.includes(k));
+
+          if (matchIng && matchSupp) {
+            conflicts.push({
+              drug_name: rx.name,
+              matched_ingredient: ing.name || rx.name,
+              supplement_name: supp,
+              severity: rule.severity,
+              conflict_type: rule.type,
+              message: rule.message_ko,
+              recommended_action: rule.action
+            });
+          }
+        }
+      }
+    }
+  }
+
+  return conflicts;
+}
+
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-// 약물 및 DNI 분석 엔드포인트
 app.post('/v1/analyze', async (req, res) => {
   try {
     const { prescriptions = [], supplements = [], pet_bio } = req.body;
@@ -68,7 +129,6 @@ app.post('/v1/analyze', async (req, res) => {
         const drugName = typeof item === 'string' ? item : item.name;
         const frequency = item.frequency_per_day || 1;
 
-        // 1. Supabase DB 조회를 최우선 실행
         const dbResult = await lookupDrugFromDb(drugName);
         if (dbResult) {
           return {
@@ -77,7 +137,6 @@ app.post('/v1/analyze', async (req, res) => {
           };
         }
 
-        // 2. DB 미검색 시 기본 폴백
         return {
           name: drugName,
           ndc_code: null,
@@ -92,11 +151,24 @@ app.post('/v1/analyze', async (req, res) => {
       })
     );
 
+    // 정밀 DNI 상호작용 분석 수행
+    const conflicts = evaluateDniConflicts(analyzedPrescriptions, supplements);
+    const conflictDetected = conflicts.length > 0;
+
+    let recommendedSchedule = "제약 없음 — 평소 급여 스케줄을 유지하세요.";
+    if (conflictDetected) {
+      const hasHigh = conflicts.some(c => c.severity === 'HIGH');
+      recommendedSchedule = hasHigh
+        ? "⚠️ 심각한 상호작용 감지: 약물과 영양제 복용 간격을 최소 2시간 이상 유지하거나 수의사 상담이 필요합니다."
+        : "⚡ 주의 상호작용 감지: 동시 복용 시 관찰이 필요합니다.";
+    }
+
     return res.json({
       status: "SUCCESS",
-      dni_conflict_detected: false,
-      conflicts: [],
-      recommended_schedule: "제약 없음 — 평소 급여 스케줄을 유지하세요.",
+      dni_conflict_detected: conflictDetected,
+      conflicts_count: conflicts.length,
+      conflicts: conflicts,
+      recommended_schedule: recommendedSchedule,
       prescriptions: analyzedPrescriptions,
       supplements: supplements
     });
@@ -108,5 +180,5 @@ app.post('/v1/analyze', async (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`[seon] CORS: * | limit: 60/min | Server running on port ${PORT}`);
+  console.log(`[seon] DNI Engine Engine Active | Server running on port ${PORT}`);
 });
