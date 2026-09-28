@@ -24,7 +24,6 @@ async function run() {
     const rawNdc = item.package_ndc || item.product_ndc || item.ndc_code;
     if (!rawNdc) continue;
 
-    const cleanNdc11 = rawNdc.replace(/[^0-9]/g, '');
     const propName = item.proprietary_name || item.brand_name || item.generic_name || "Veterinary Drug";
     const nonPropName = item.nonproprietary_name || item.generic_name || propName;
 
@@ -38,10 +37,9 @@ async function run() {
       ingredients = [{ name: nonPropName, strength: '' }];
     }
 
-    // Supabase fda_ndc_vet_dictionary 테이블의 스키마와 100% 일치하는 객체 생성
-    map.set(cleanNdc11, {
+    // ndc_11은 DB에서 자동 생성되므로 전송 객체에서 완전히 제외
+    map.set(rawNdc, {
       ndc_code: rawNdc,
-      ndc_11: cleanNdc11,
       proprietary_name: propName,
       nonproprietary_name: nonPropName,
       aliases: [propName.toLowerCase()],
