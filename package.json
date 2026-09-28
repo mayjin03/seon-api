@@ -1,16 +1,17 @@
 {
   "name": "seon-api-server",
-  "version": "1.0.0",
-  "description": "SEON standalone B2B API server — POST /v1/analyze (Pet Bio + Prescriptions + Supplements -> B2B RAW JSON)",
+  "version": "1.1.0",
+  "description": "SEON standalone B2B API server — POST /v1/analyze (Supabase API-key validation + analysis history)",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=22"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.117.2",
     "cors": "^2.8.6",
     "express": "^5.2.1"
   },
