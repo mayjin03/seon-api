@@ -19,43 +19,7 @@ if (SUPABASE_URL && SUPABASE_KEY) {
   console.warn('[seon] Supabase credentials missing');
 }
 
-// DNI 금기 및 상호작용 규칙 데이터베이스 (Labetalol 규칙 포함)
-const DNI_RULES = [
-  {
-    ingredientKeywords: ['ENROFLOXACIN', 'CIPROFLOXACIN', 'MARBOFLOXACIN', 'DOXYCYCLINE'],
-    supplementKeywords: ['칼슘', '마그네슘', '철분', '아연', 'CALCIUM', 'MAGNESIUM', 'IRON', 'ZINC'],
-    severity: 'HIGH',
-    type: 'CHELATION_ABSORPTION_REDUCTION',
-    message_ko: '다가 양이온(칼슘/마그네슘/철분) 영양제와 동시 급여 시 약물 흡수율이 크게 저하됩니다. 최소 2시간 간격을 두고 급여하세요.',
-    action: 'SEPARATE_TIME_2HRS'
-  },
-  {
-    ingredientKeywords: ['LABETALOL', 'ATENOLOL', 'PROPRANOLOL', 'CARVEDILOL'],
-    supplementKeywords: ['칼슘', '마그네슘', 'CALCIUM', 'MAGNESIUM'],
-    severity: 'MEDIUM',
-    type: 'BIOAVAILABILITY_REDUCTION',
-    message_ko: '베타차단제(Labetalol 등)는 칼슘/마그네슘 보충제와 동시 복용 시 약물 생체이용률이 감소하거나 서맥/혈압 변화 유발 가능성이 있습니다. 간격을 두고 급여하세요.',
-    action: 'SEPARATE_TIME_2HRS'
-  },
-  {
-    ingredientKeywords: ['BENAZEPRIL', 'ENALAPRIL', 'SPIRONOLACTONE'],
-    supplementKeywords: ['칼륨', 'POTASSIUM'],
-    severity: 'HIGH',
-    type: 'HYPERKALEMIA_RISK',
-    message_ko: 'ACE 억제제/보존성 이뇨제 성분과 칼륨 보충제 동시 급여 시 고칼륨혈증 위험이 유발될 수 있습니다. 모니터링이 필요합니다.',
-    action: 'CONTRAINDICATED'
-  },
-  {
-    ingredientKeywords: ['WARFARIN', 'CLOPIDOGREL', 'ASPIRIN'],
-    supplementKeywords: ['오메가3', '비타민E', 'OMEGA-3', 'OMEGA3', 'VITAMIN E'],
-    severity: 'MEDIUM',
-    type: 'BLEEDING_RISK',
-    message_ko: '항응고제 성분과 고용량 오메가3 또는 비타민E 동시 급여 시 출혈 경향이 증가할 수 있습니다.',
-    action: 'MONITOR_BLEEDING'
-  }
-];
-
-// Supabase DB 실시간 약물 조회 (정규화 지원)
+// Supabase DB 실시간 약물 조회
 async function lookupDrugFromDb(drugInput) {
   if (!drugInput || !supabase) return null;
   const searchTerm = drugInput.trim();
@@ -102,44 +66,53 @@ async function lookupDrugFromDb(drugInput) {
       }
     }
   } catch (err) {
-    console.error("[seon] Supabase lookup error:", err.message);
+    console.error("[seon] Supabase drug lookup error:", err.message);
   }
 
   return null;
 }
 
-// DNI 상호작용 검사 엔진
-function evaluateDniConflicts(prescriptions, supplements) {
+// Supabase dni_rules 테이블 기반 실시간 DNI 검사 엔진
+async function evaluateDniConflictsFromDb(prescriptions, supplements) {
   const conflicts = [];
+  if (!supabase) return conflicts;
 
-  for (const rx of prescriptions) {
-    const ingredients = rx.active_ingredients || [];
-    const rxName = (rx.name || '').toUpperCase();
+  try {
+    // 1. Supabase에서 전체 DNI 규칙 불러오기
+    const { data: rules, error } = await supabase.from('dni_rules').select('*');
+    if (error || !rules) return conflicts;
 
-    for (const ing of ingredients) {
-      const ingName = (ing.name || '').toUpperCase();
+    for (const rx of prescriptions) {
+      const ingredients = rx.active_ingredients || [];
+      const rxName = (rx.name || '').toUpperCase();
 
-      for (const supp of supplements) {
-        const suppName = (typeof supp === 'string' ? supp : supp.name || '').toUpperCase();
+      for (const ing of ingredients) {
+        const ingName = (ing.name || '').toUpperCase();
 
-        for (const rule of DNI_RULES) {
-          const matchIng = rule.ingredientKeywords.some(k => ingName.includes(k) || rxName.includes(k));
-          const matchSupp = rule.supplementKeywords.some(k => suppName.includes(k));
+        for (const supp of supplements) {
+          const suppName = (typeof supp === 'string' ? supp : supp.name || '').toUpperCase();
 
-          if (matchIng && matchSupp) {
-            conflicts.push({
-              drug_name: rx.name,
-              matched_ingredient: ing.name || rx.name,
-              supplement_name: supp,
-              severity: rule.severity,
-              conflict_type: rule.type,
-              message: rule.message_ko,
-              recommended_action: rule.action
-            });
+          for (const rule of rules) {
+            const matchIng = rule.ingredient_keywords.some(k => ingName.includes(k) || rxName.includes(k));
+            const matchSupp = rule.supplement_keywords.some(k => suppName.includes(k));
+
+            if (matchIng && matchSupp) {
+              conflicts.push({
+                drug_name: rx.name,
+                matched_ingredient: ing.name || rx.name,
+                supplement_name: supp,
+                severity: rule.severity,
+                conflict_type: rule.conflict_type,
+                message: rule.message_ko,
+                recommended_action: rule.recommended_action
+              });
+            }
           }
         }
       }
     }
+  } catch (err) {
+    console.error("[seon] DNI DB Evaluation error:", err.message);
   }
 
   return conflicts;
@@ -180,7 +153,8 @@ app.post('/v1/analyze', async (req, res) => {
       })
     );
 
-    const conflicts = evaluateDniConflicts(analyzedPrescriptions, supplements);
+    // DB 기반 DNI 상호작용 분석 수행
+    const conflicts = await evaluateDniConflictsFromDb(analyzedPrescriptions, supplements);
     const conflictDetected = conflicts.length > 0;
 
     let recommendedSchedule = "제약 없음 — 평소 급여 스케줄을 유지하세요.";
@@ -208,5 +182,5 @@ app.post('/v1/analyze', async (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`[seon] DNI Engine Active | Server running on port ${PORT}`);
+  console.log(`[seon] DB-Driven DNI Engine Active | Server running on port ${PORT}`);
 });
