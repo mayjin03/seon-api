@@ -19,7 +19,7 @@ if (SUPABASE_URL && SUPABASE_KEY) {
   console.warn('[seon] Supabase credentials missing');
 }
 
-// DNI 금기 및 상호작용 규칙 데이터베이스
+// DNI 금기 및 상호작용 규칙 데이터베이스 (Labetalol 규칙 포함)
 const DNI_RULES = [
   {
     ingredientKeywords: ['ENROFLOXACIN', 'CIPROFLOXACIN', 'MARBOFLOXACIN', 'DOXYCYCLINE'],
@@ -27,6 +27,14 @@ const DNI_RULES = [
     severity: 'HIGH',
     type: 'CHELATION_ABSORPTION_REDUCTION',
     message_ko: '다가 양이온(칼슘/마그네슘/철분) 영양제와 동시 급여 시 약물 흡수율이 크게 저하됩니다. 최소 2시간 간격을 두고 급여하세요.',
+    action: 'SEPARATE_TIME_2HRS'
+  },
+  {
+    ingredientKeywords: ['LABETALOL', 'ATENOLOL', 'PROPRANOLOL', 'CARVEDILOL'],
+    supplementKeywords: ['칼슘', '마그네슘', 'CALCIUM', 'MAGNESIUM'],
+    severity: 'MEDIUM',
+    type: 'BIOAVAILABILITY_REDUCTION',
+    message_ko: '베타차단제(Labetalol 등)는 칼슘/마그네슘 보충제와 동시 복용 시 약물 생체이용률이 감소하거나 서맥/혈압 변화 유발 가능성이 있습니다. 간격을 두고 급여하세요.',
     action: 'SEPARATE_TIME_2HRS'
   },
   {
@@ -42,18 +50,18 @@ const DNI_RULES = [
     supplementKeywords: ['오메가3', '비타민E', 'OMEGA-3', 'OMEGA3', 'VITAMIN E'],
     severity: 'MEDIUM',
     type: 'BLEEDING_RISK',
-    message_ko: '항응고제/항혈소판제 성분과 고용량 오메가3 또는 비타민E 동시 급여 시 출혈 경향이 증가할 수 있습니다.',
+    message_ko: '항응고제 성분과 고용량 오메가3 또는 비타민E 동시 급여 시 출혈 경향이 증가할 수 있습니다.',
     action: 'MONITOR_BLEEDING'
   }
 ];
 
-// 강화된 Supabase DB 실시간 약물 조회 함수
+// Supabase DB 실시간 약물 조회 (정규화 지원)
 async function lookupDrugFromDb(drugInput) {
   if (!drugInput || !supabase) return null;
   const searchTerm = drugInput.trim();
+  const cleanDigits = searchTerm.replace(/[^0-9]/g, '');
 
   try {
-    // 1차: 약물명, 성분명, NDC 코드, aliases 배열까지 광범위하게 ILIKE 검색
     const { data: dbMatches, error } = await supabase
       .from('fda_ndc_vet_dictionary')
       .select('*')
@@ -71,6 +79,27 @@ async function lookupDrugFromDb(drugInput) {
         proprietary_name: matched.proprietary_name || matched.nonproprietary_name,
         active_ingredients: matched.active_ingredients || []
       };
+    }
+
+    if (cleanDigits.length >= 8) {
+      const { data: ndcMatches } = await supabase
+        .from('fda_ndc_vet_dictionary')
+        .select('*')
+        .ilike('ndc_11', `%${cleanDigits}%`);
+
+      if (ndcMatches && ndcMatches.length > 0) {
+        const matched = ndcMatches[0];
+        return {
+          name: matched.proprietary_name || matched.nonproprietary_name,
+          ndc_code: matched.ndc_code,
+          ndc_11: matched.ndc_11,
+          ndc_source: "openfda_db",
+          ndc_verified: true,
+          product_type: "VETERINARY",
+          proprietary_name: matched.proprietary_name || matched.nonproprietary_name,
+          active_ingredients: matched.active_ingredients || []
+        };
+      }
     }
   } catch (err) {
     console.error("[seon] Supabase lookup error:", err.message);
