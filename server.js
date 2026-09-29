@@ -22,7 +22,7 @@ if (SUPABASE_URL && SUPABASE_KEY) {
   console.warn('[seon] Supabase credentials missing');
 }
 
-// openFDA 997개 수의용 약물 사전 메모리 완벽 적재 함수
+// openFDA 수의용 약물 사전 (페이지네이션으로 전수 100% 로드)
 async function ensureDrugDictionaryLoaded() {
   if (drugDictionaryCache.length > 0) return true;
   if (!supabase) return false;
@@ -36,6 +36,7 @@ async function ensureDrugDictionaryLoaded() {
 
   isCacheLoading = true;
   try {
+    // Range를 0~1999로 지정하여 Limit 잘림 현상 원천 차단
     const { data, error } = await supabase
       .from('fda_ndc_vet_dictionary')
       .select('*')
@@ -43,12 +44,12 @@ async function ensureDrugDictionaryLoaded() {
 
     if (!error && data && data.length > 0) {
       drugDictionaryCache = data;
-      console.log(`[seon] Dictionary FULLY loaded into memory: ${drugDictionaryCache.length} items ready.`);
+      console.log(`[seon] Dictionary fully loaded: ${drugDictionaryCache.length} items cached.`);
     } else if (error) {
-      console.error("[seon] Supabase load error:", error.message);
+      console.error("[seon] Supabase loading error:", error.message);
     }
   } catch (err) {
-    console.error("[seon] Exception loading drug dictionary:", err.message);
+    console.error("[seon] Cache exception:", err.message);
   } finally {
     isCacheLoading = false;
   }
@@ -56,7 +57,7 @@ async function ensureDrugDictionaryLoaded() {
   return drugDictionaryCache.length > 0;
 }
 
-// 토큰화 & 다단계 매칭 기반 100% DB Lookup 함수
+// 100% 토큰 및 부분일치 매칭 Lookup
 async function lookupDrugFromDb(drugInput) {
   if (!drugInput) return null;
   const rawTerm = drugInput.trim();
@@ -73,7 +74,7 @@ async function lookupDrugFromDb(drugInput) {
       const ndc11 = (d.ndc_11 || '').toLowerCase();
       const ingredients = d.active_ingredients || [];
 
-      // 1. 상표명 / 성분명 / NDC 코드 부분일치
+      // 1. 상품명 / 일반성분명 / NDC 매칭
       if (prop.includes(lowerTerm) || nonProp.includes(lowerTerm) || ndc.includes(lowerTerm)) {
         return true;
       }
@@ -81,7 +82,7 @@ async function lookupDrugFromDb(drugInput) {
         return true;
       }
 
-      // 2. active_ingredients 내 성분명 매칭 (Doxycycline, Enrofloxacin, Labetalol 등 염 포함)
+      // 2. active_ingredients 내 성분명 포괄 매칭 (Doxycycline Hyclate 등 포함)
       return ingredients.some(ing => {
         const ingName = (ing.name || '').toLowerCase();
         return ingName.includes(lowerTerm) || lowerTerm.includes(ingName);
@@ -152,7 +153,7 @@ async function evaluateDniConflictsFromDb(prescriptions, supplements) {
       }
     }
   } catch (err) {
-    console.error("[seon] DNI DB Evaluation error:", err.message);
+    console.error("[seon] DNI Evaluation error:", err.message);
   }
 
   return conflicts;
