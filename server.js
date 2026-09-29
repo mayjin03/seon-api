@@ -10,59 +10,77 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 10000;
 
-// Request Body JSON 파싱
 app.use(express.json());
-
-// public 폴더 내 정적 파일 제공
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Supabase 클라이언트 생성
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_ANON_KEY
 );
 
-// 루트 경로 접속 시 public/index.html 전달
+// 기본 페이지
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-// 약물-영양소 상극 체크 API
+// 기존 API 엔드포인트
 app.post('/api/check-dni', async (req, res) => {
   try {
     const { medications, supplements } = req.body;
-
-    if (!medications || !supplements) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'medications와 supplements 배열을 전달해야 합니다.' 
-      });
-    }
-
-    // PostgreSQL 배열 교집합 연산(cs: contains)으로 DNI 규칙 조회
     const { data, error } = await supabase
       .from('dni_rules')
       .select('*')
-      .filter('ingredient_keywords', 'cs', JSON.stringify(medications))
-      .filter('supplement_keywords', 'cs', JSON.stringify(supplements));
+      .filter('ingredient_keywords', 'cs', JSON.stringify(medications || []))
+      .filter('supplement_keywords', 'cs', JSON.stringify(supplements || []));
 
-    if (error) {
-      console.error('Supabase Query Error:', error);
-      throw error;
-    }
+    if (error) throw error;
+    res.json({ success: true, conflicts: data || [] });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// 프론트엔드 앱 연동용 엔드포인트 (/v1/analyze)
+app.post('/v1/analyze', async (req, res) => {
+  try {
+    const { prescriptions = [], supplements = [] } = req.body;
+
+    // 입력 데이터 추출
+    const medList = prescriptions.map(p => typeof p === 'string' ? p.toLowerCase() : p.name?.toLowerCase()).filter(Boolean);
+    const suppList = supplements.map(s => typeof s === 'string' ? s.toLowerCase() : s.name?.toLowerCase()).filter(Boolean);
+
+    // Supabase DNI 데이터 조회
+    const { data, error } = await supabase
+      .from('dni_rules')
+      .select('*');
+
+    if (error) throw error;
+
+    // 매칭되는 규칙 필터링
+    const conflicts = (data || []).filter(rule => {
+      const matchMed = rule.ingredient_keywords?.some(k => medList.includes(k.toLowerCase()));
+      const matchSupp = rule.supplement_keywords?.some(k => suppList.includes(k.toLowerCase()));
+      return matchMed && matchSupp;
+    });
 
     res.json({
-      success: true,
-      conflicts: data || []
+      status: "SUCCESS",
+      data: {
+        conflicts: conflicts,
+        total_conflicts: conflicts.length
+      }
     });
   } catch (err) {
-    console.error('Server Error:', err.message);
-    res.status(500).json({ success: false, message: '서버 에러가 발생했습니다.' });
+    console.error('Analyze Error:', err);
+    res.status(500).json({
+      status: "ERROR",
+      message: err.message
+    });
   }
 });
 
 app.listen(PORT, () => {
-  console.log(`Server is running on port ${PORT}`);
+  console.log(`Server running on port ${PORT}`);
 });
