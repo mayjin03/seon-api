@@ -419,19 +419,28 @@ app.post('/v1/analyze', rateLimiter, authenticateApiKey, async (req, res) => {
         : "⚡ 주의 상호작용 감지: 동시 복용 시 관찰이 필요합니다.";
     }
 
-    // 프론트엔드 레거시 파서 호환 전체 응답 객체 (위젯 필드 무조건 수용)
-    return res.json({
+    const payload = {
       status: "SUCCESS",
       dni_conflict_detected: conflictDetected,
       has_conflict: conflictDetected,
       conflicts_count: conflicts.length,
       conflicts: conflicts,
+      dni_conflicts: conflicts,       // 프론트 호환용
+      interactions: conflicts,        // 프론트 호환용
       recommended_schedule: recommendedSchedule,
-      schedule_recommendation: recommendedSchedule,
-      summary: recommendedSchedule,
+      schedule_recommendation: recommendedSchedule, // 프론트 호환용
+      summary: recommendedSchedule,                 // 프론트 호환용
       isolation_hours: conflictDetected ? (hasHigh ? 4 : 2) : 0,
+      hepatic_strain_index: 0,        // 프론트 호환용
+      renal_clearance_burden: "LOW",   // 프론트 호환용
       prescriptions: analyzedPrescriptions,
       supplements: supplements
+    };
+
+    // 래핑 구조 및 평문 구조 모두 응답
+    return res.json({
+      ...payload,
+      data: payload
     });
 
   } catch (error) {
