@@ -410,21 +410,24 @@ app.post('/v1/analyze', rateLimiter, authenticateApiKey, async (req, res) => {
 
     const conflicts = await evaluateDniConflictsFromDb(analyzedPrescriptions, supplements);
     const conflictDetected = conflicts.length > 0;
+    const hasHigh = conflicts.some(c => c.severity === 'HIGH');
 
     let recommendedSchedule = "제약 없음 — 평소 급여 스케줄을 유지하세요.";
     if (conflictDetected) {
-      const hasHigh = conflicts.some(c => c.severity === 'HIGH');
       recommendedSchedule = hasHigh
         ? "⚠️ 심각한 상호작용 감지: 약물과 영양제 복용 간격을 최소 2시간 이상 유지하거나 수의사 상담이 필요합니다."
         : "⚡ 주의 상호작용 감지: 동시 복용 시 관찰이 필요합니다.";
     }
 
+    // 프론트엔드 위젯 UI 파서 완벽 호환 응답 구조
     return res.json({
       status: "SUCCESS",
       dni_conflict_detected: conflictDetected,
+      has_conflict: conflictDetected,
       conflicts_count: conflicts.length,
       conflicts: conflicts,
       recommended_schedule: recommendedSchedule,
+      isolation_hours: conflictDetected ? (hasHigh ? 4 : 2) : 0,
       prescriptions: analyzedPrescriptions,
       supplements: supplements
     });
