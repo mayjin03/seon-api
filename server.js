@@ -79,7 +79,7 @@ const MASTER_DRUG_RECORDS = {
   ivermectin: { ndc_code: '00010-4181-01', ndc_11: '00010418101', proprietary_name: 'HEARTGARD', nonproprietary_name: 'IVERMECTIN', active_ingredients: [{ name: 'IVERMECTIN', strength: '68 mcg' }] }
 };
 
-// 2. 동의어 그룹 (독립 단어 일치만 적용)
+// 2. 동의어 그룹
 const ALIAS_GROUP_LIST = [
   { masterKey: 'doxycycline', aliases: ['doxycycline', 'doxycyclin', 'vibramycin', 'doxy'] },
   { masterKey: 'enrofloxacin', aliases: ['enrofloxacin', 'enrofloxacine', 'baytril', 'enroflox'] },
@@ -176,7 +176,6 @@ function normalizeString(str) {
   return str.toLowerCase().replace(/[^a-z0-9]/g, '');
 }
 
-// 엄격 토큰 정밀 Lookup 엔진 (크로스 오염 100% 방지)
 async function lookupDrugFromDb(drugInput) {
   if (!drugInput) return null;
   let rawTerm = drugInput.trim();
@@ -192,7 +191,7 @@ async function lookupDrugFromDb(drugInput) {
 
   if (normalizedTerm.length < 3) return null;
 
-  // Step 1: 완전 일치 및 단어 토큰 일치 매칭 (Partial Substring 절대 금지)
+  // Step 1: 완전 일치 매칭
   const matchedGroup = ALIAS_GROUP_LIST.find(group => 
     group.aliases.some(alias => {
       const normAlias = normalizeString(alias);
@@ -216,7 +215,7 @@ async function lookupDrugFromDb(drugInput) {
     }
   }
 
-  // Step 2: openFDA DB 캐시 정밀 토큰 검색
+  // Step 2: Supabase DB 캐시 정밀 토큰 검색
   await ensureDrugDictionaryLoaded();
 
   if (drugDictionaryCache.length > 0) {
@@ -227,7 +226,6 @@ async function lookupDrugFromDb(drugInput) {
       const ndc11 = (d.ndc_11 || '').toLowerCase();
       const ingredients = d.active_ingredients || [];
 
-      // 브랜드명 및 일반명 완전 동일 여부 확인
       if (propNorm === normalizedTerm || nonPropNorm === normalizedTerm || ndc === lowerTerm) {
         return true;
       }
@@ -235,7 +233,6 @@ async function lookupDrugFromDb(drugInput) {
         return true;
       }
 
-      // 성분명 토큰 단위 정밀 검사 (Ciprofloxacin이 Ofloxacin에 걸리지 않도록 방어)
       return ingredients.some(ing => {
         const rawIngName = (ing.name || '').toLowerCase();
         const ingTokens = rawIngName.split(/\s+/).map(t => normalizeString(t));
@@ -313,10 +310,10 @@ async function evaluateDniConflictsFromDb(prescriptions, supplements) {
   return conflicts;
 }
 
-app.get('/health', async (ensureDrugDictionaryLoaded => async (req, res) => {
+app.get('/health', async (req, res) => {
   await ensureDrugDictionaryLoaded();
   res.json({ status: 'ok', cached_drugs: drugDictionaryCache.length, timestamp: new Date().toISOString() });
-}));
+});
 
 app.post('/v1/analyze', async (req, res) => {
   try {
