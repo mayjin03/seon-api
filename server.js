@@ -419,7 +419,7 @@ app.post('/v1/analyze', rateLimiter, authenticateApiKey, async (req, res) => {
         : "⚡ 주의 상호작용 감지: 동시 복용 시 관찰이 필요합니다.";
     }
 
-    // 프론트엔드 위젯 UI 파서 완벽 호환 응답 구조
+    // 프론트엔드 레거시 파서 호환 전체 응답 객체 (위젯 필드 무조건 수용)
     return res.json({
       status: "SUCCESS",
       dni_conflict_detected: conflictDetected,
@@ -427,6 +427,8 @@ app.post('/v1/analyze', rateLimiter, authenticateApiKey, async (req, res) => {
       conflicts_count: conflicts.length,
       conflicts: conflicts,
       recommended_schedule: recommendedSchedule,
+      schedule_recommendation: recommendedSchedule,
+      summary: recommendedSchedule,
       isolation_hours: conflictDetected ? (hasHigh ? 4 : 2) : 0,
       prescriptions: analyzedPrescriptions,
       supplements: supplements
