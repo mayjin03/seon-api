@@ -88,7 +88,55 @@ const MASTER_DRUG_RECORDS = {
   // (Boehringer Ingelheim Animal Health USA Inc.), NADA 141-273. 4개 함량(1.25/2.5/5/10mg) 중
   // 5mg 제품(0010-4482-01)을 대표값으로 등록해요. ndc_11 은 4-4-2 형식이라 라벨러 앞에 0을 채워
   // 5자리로 맞춰요(00010 + 4482 + 01 = 00010448201).
-  pimobendan: { ndc_code: '0010-4482-01', ndc_11: '00010448201', proprietary_name: 'VETMEDIN', nonproprietary_name: 'PIMOBENDAN', active_ingredients: [{ name: 'PIMOBENDAN', strength: '5 mg' }] }
+  pimobendan: { ndc_code: '0010-4482-01', ndc_11: '00010448201', proprietary_name: 'VETMEDIN', nonproprietary_name: 'PIMOBENDAN', active_ingredients: [{ name: 'PIMOBENDAN', strength: '5 mg' }], product_type: 'VETERINARY' },
+
+  // ---- 아래부터 이번 턴에 실제 DailyMed/제조사 라벨로 검증해 추가한 임상 필수 처방약이에요. ----
+  // product_type 표시 기준: 미국 FDA 가 실제로 "동물용(NADA)"으로 승인한 제품은 VETERINARY,
+  // 그런 제품이 없어 수의사가 사람용 제네릭을 초허가(off-label)로 처방하는 약물은 HUMAN 으로
+  // 정직하게 구분해요(예: benazepril·enalapril·metronidazole·tramadol 은 미국에 FDA 승인
+  // 동물용 완제품이 없어요 — 유럽 Fortekor/Enacard 는 EU/EMA 승인이라 미국 NDC가 없어요).
+
+  // PrednisTab(prednisolone tablets), Covetrus. NADA 없음(일반 처방 스테로이드, 개 전용).
+  // NDC 11695-4469-1(5mg), 5-4-1 형식 -> 11자리: 11695+4469+01 = 11695446901.
+  prednisolone: { ndc_code: '11695-4469-1', ndc_11: '11695446901', proprietary_name: 'PredniSTAB', nonproprietary_name: 'PREDNISOLONE', active_ingredients: [{ name: 'PREDNISOLONE', strength: '5 mg' }], product_type: 'VETERINARY' },
+
+  // METACAM(meloxicam oral suspension), Boehringer Ingelheim. NADA(개 전용 NSAID).
+  // NDC 0010-6015-01(1.5mg/mL), 4-4-2 -> 11자리: 00010+6015+01 = 00010601501.
+  meloxicam: { ndc_code: '0010-6015-01', ndc_11: '00010601501', proprietary_name: 'METACAM', nonproprietary_name: 'MELOXICAM', active_ingredients: [{ name: 'MELOXICAM', strength: '1.5 mg/mL' }], product_type: 'VETERINARY' },
+
+  // 사람용 제네릭(ANDA076820). 미국엔 FDA 승인 동물용 benazepril 제품이 없어요
+  // (EU의 FORTEKOR 은 EMA 승인이라 미국 NDC 없음 — 수의사가 사람용을 초허가로 처방).
+  // NDC 65162-751-03(5mg), 5-3-2 -> 11자리: 65162+0751+03 = 65162075103.
+  benazepril: { ndc_code: '65162-751-03', ndc_11: '65162075103', proprietary_name: 'Benazepril HCl (generic)', nonproprietary_name: 'BENAZEPRIL HYDROCHLORIDE', active_ingredients: [{ name: 'BENAZEPRIL HYDROCHLORIDE', strength: '5 mg' }], product_type: 'HUMAN' },
+
+  // 사람용 제네릭(ANDA075479). 미국 동물용 브랜드 ENACARD(NADA 141-015)가 있지만 정확한
+  // NDC 를 확인하지 못해, 검증된 사람용 제네릭으로 등록해요(둘 다 개 심부전에 쓰는 동일 성분).
+  // NDC 23155-704-01(5mg), 5-3-2 -> 11자리: 23155+0704+01 = 23155070401.
+  enalapril: { ndc_code: '23155-704-01', ndc_11: '23155070401', proprietary_name: 'Enalapril Maleate (generic) / ENACARD', nonproprietary_name: 'ENALAPRIL MALEATE', active_ingredients: [{ name: 'ENALAPRIL MALEATE', strength: '5 mg' }], product_type: 'HUMAN' },
+
+  // AMODIP(amlodipine besylate chewable), 고양이 전용이지만 개에도 초허가로 흔히 처방돼요. NADA.
+  // NDC 13744-815-01(1.25mg), 5-3-2 -> 11자리: 13744+0815+01 = 13744081501.
+  amlodipine: { ndc_code: '13744-815-01', ndc_11: '13744081501', proprietary_name: 'AMODIP', nonproprietary_name: 'AMLODIPINE BESYLATE', active_ingredients: [{ name: 'AMLODIPINE BESYLATE', strength: '1.25 mg' }], product_type: 'VETERINARY' },
+
+  // 사람용 제네릭(ANDA076003). Schedule IV 통제약물 — 미국에 FDA 승인 동물용 제품이 없어요.
+  // NDC 0591-0466-01(50mg), 4-4-2 -> 11자리: 00591+0466+01 = 00591046601.
+  tramadol: { ndc_code: '0591-0466-01', ndc_11: '00591046601', proprietary_name: 'Tramadol HCl (generic)', nonproprietary_name: 'TRAMADOL HYDROCHLORIDE', active_ingredients: [{ name: 'TRAMADOL HYDROCHLORIDE', strength: '50 mg' }], product_type: 'HUMAN' },
+
+  // CLAVAMOX CHEWABLE(amoxicillin/clavulanate potassium), Zoetis. NADA 055099.
+  // NDC 54771-1023-02(62.5mg 정: amoxicillin 50mg + clavulanic acid 12.5mg), 5-4-2(이미 11자리).
+  clavamox: { ndc_code: '54771-1023-02', ndc_11: '54771102302', proprietary_name: 'CLAVAMOX CHEWABLE', nonproprietary_name: 'AMOXICILLIN AND CLAVULANATE POTASSIUM', active_ingredients: [{ name: 'AMOXICILLIN', strength: '50 mg' }, { name: 'CLAVULANATE POTASSIUM', strength: '12.5 mg' }], product_type: 'VETERINARY' },
+
+  // 사람용 제네릭(ANDA079067). 미국에 FDA 승인 동물용 metronidazole 제품이 없어요.
+  // NDC 60687-526-01(250mg), 5-3-2 -> 11자리: 60687+0526+01 = 60687052601.
+  metronidazole: { ndc_code: '60687-526-01', ndc_11: '60687052601', proprietary_name: 'Metronidazole (generic) / FLAGYL', nonproprietary_name: 'METRONIDAZOLE', active_ingredients: [{ name: 'METRONIDAZOLE', strength: '250 mg' }], product_type: 'HUMAN' },
+
+  // CERENIA(maropitant citrate tablet), Zoetis. NADA 141262(개 전용 항구토제).
+  // NDC 54771-8181-1(24mg), 5-4-1 -> 11자리: 54771+8181+01 = 54771818101.
+  maropitant: { ndc_code: '54771-8181-1', ndc_11: '54771818101', proprietary_name: 'CERENIA', nonproprietary_name: 'MAROPITANT CITRATE', active_ingredients: [{ name: 'MAROPITANT CITRATE', strength: '24 mg' }], product_type: 'VETERINARY' },
+
+  // APOQUEL(oclacitinib maleate tablet), Zoetis. NADA 141345(개 전용 가려움증 치료제).
+  // NDC 54771-8722-3(5.4mg, 250정), 5-4-1 -> 11자리: 54771+8722+03 = 54771872203.
+  oclacitinib: { ndc_code: '54771-8722-3', ndc_11: '54771872203', proprietary_name: 'APOQUEL', nonproprietary_name: 'OCLACITINIB MALEATE', active_ingredients: [{ name: 'OCLACITINIB MALEATE', strength: '5.4 mg' }], product_type: 'VETERINARY' }
 };
 
 const ALIAS_GROUP_LIST = [
@@ -98,7 +146,17 @@ const ALIAS_GROUP_LIST = [
   { masterKey: 'gabapentin', aliases: ['gabapentin', 'neurontin'] },
   { masterKey: 'carprofen', aliases: ['carprofen', 'rimadyl', 'carprovet'] },
   { masterKey: 'furosemide', aliases: ['furosemide', 'salix', 'lasix'] },
-  { masterKey: 'pimobendan', aliases: ['pimobendan', 'vetmedin'] }
+  { masterKey: 'pimobendan', aliases: ['pimobendan', 'vetmedin'] },
+  { masterKey: 'prednisolone', aliases: ['prednisolone', 'prednistab', 'pred'] },
+  { masterKey: 'meloxicam', aliases: ['meloxicam', 'metacam', 'loxicom', 'meloxidyl'] },
+  { masterKey: 'benazepril', aliases: ['benazepril', 'fortekor', 'lotensin'] },
+  { masterKey: 'enalapril', aliases: ['enalapril', 'enacard', 'vasotec', 'enalaprilmaleate'] },
+  { masterKey: 'amlodipine', aliases: ['amlodipine', 'amodip', 'norvasc', 'amlodipinebesylate'] },
+  { masterKey: 'tramadol', aliases: ['tramadol', 'ultram', 'tramadolhcl', 'tramadolhydrochloride'] },
+  { masterKey: 'clavamox', aliases: ['clavamox', 'amoxicillinclavulanate', 'amoxiclav', 'augmentin'] },
+  { masterKey: 'metronidazole', aliases: ['metronidazole', 'flagyl'] },
+  { masterKey: 'maropitant', aliases: ['maropitant', 'cerenia', 'maropitantcitrate'] },
+  { masterKey: 'oclacitinib', aliases: ['oclacitinib', 'apoquel', 'oclacitinibmaleate'] }
 ];
 
 if (SUPABASE_URL && SUPABASE_KEY) {
@@ -171,7 +229,12 @@ async function lookupDrugFromDb(drugInput) {
         ndc_11: mapped.ndc_11,
         ndc_source: "openfda_db",
         ndc_verified: true,
-        product_type: "VETERINARY",
+        // [정밀도 보강] product_type 은 이제 항목별로 정확히 반영돼요. 진짜 FDA 승인 "동물용"
+        // 제품(NADA)은 VETERINARY, 사람용 제네릭을 수의사가 처방 시 초허가(off-label)로 쓰는
+        // 약물(예: benazepril·enalapril·metronidazole·tramadol 은 미국에 FDA 승인 동물용
+        // 제품이 없어요)은 HUMAN 으로 정직하게 구분해요. 이 필드가 없던 기존 6개 항목은
+        // 전부 VETERINARY 라서, 지정 안 하면 그대로 VETERINARY 로 동작해요(하위 호환).
+        product_type: mapped.product_type || "VETERINARY",
         proprietary_name: mapped.proprietary_name,
         active_ingredients: mapped.active_ingredients
       };
