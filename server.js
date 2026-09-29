@@ -15,7 +15,7 @@ let supabase = null;
 let drugDictionaryCache = [];
 let isCacheLoading = false;
 
-// 1. 수의학 전 처방약 마스터 레코드 (기본 메타데이터 제공용)
+// 1. 수의학 전 처방약 마스터 레코드
 const MASTER_DRUG_RECORDS = {
   doxycycline: { ndc_code: '00069-0960-01', ndc_11: '00069096001', proprietary_name: 'VIBRAMYCIN', nonproprietary_name: 'DOXYCYCLINE MONOHYDRATE', active_ingredients: [{ name: 'DOXYCYCLINE MONOHYDRATE', strength: '100 mg' }] },
   enrofloxacin: { ndc_code: '81471-693-00', ndc_11: '81471069300', proprietary_name: 'BAYTRIL', nonproprietary_name: 'ENROFLOXACIN', active_ingredients: [{ name: 'ENROFLOXACIN', strength: '22.7 mg' }] },
@@ -48,8 +48,6 @@ const MASTER_DRUG_RECORDS = {
   simparica: { ndc_code: '00069-0231-01', ndc_11: '00069023101', proprietary_name: 'SIMPARICA', nonproprietary_name: 'SAROLANER', active_ingredients: [{ name: 'SAROLANER', strength: '10 mg' }] },
   metronidazole: { ndc_code: '00058-0410-01', ndc_11: '00058041001', proprietary_name: 'FLAGYL', nonproprietary_name: 'METRONIDAZOLE', active_ingredients: [{ name: 'METRONIDAZOLE', strength: '250 mg' }] },
   tylosin: { ndc_code: '00098-0511-01', ndc_11: '00098051101', proprietary_name: 'TYLAN', nonproprietary_name: 'TYLOSIN TARTRATE', active_ingredients: [{ name: 'TYLOSIN TARTRATE', strength: '100 g' }] },
-
-  // 수의학 범용 처방약 10종 추가 적재
   tobrex: { ndc_code: '00065-0644-05', ndc_11: '00065064405', proprietary_name: 'TOBREX', nonproprietary_name: 'TOBRAMYCIN', active_ingredients: [{ name: 'TOBRAMYCIN', strength: '0.3%' }] },
   ocuflox: { ndc_code: '00023-9188-05', ndc_11: '00023918805', proprietary_name: 'OCUFLOX', nonproprietary_name: 'OFLOXACIN', active_ingredients: [{ name: 'OFLOXACIN', strength: '0.3%' }] },
   nizoral: { ndc_code: '50458-223-06', ndc_11: '50458022306', proprietary_name: 'NIZORAL', nonproprietary_name: 'KETOCONAZOLE', active_ingredients: [{ name: 'KETOCONAZOLE', strength: '200 mg' }] },
@@ -62,7 +60,7 @@ const MASTER_DRUG_RECORDS = {
   pepcid: { ndc_code: '00006-0040-01', ndc_11: '00006004001', proprietary_name: 'PEPCID', nonproprietary_name: 'FAMOTIDINE', active_ingredients: [{ name: 'FAMOTIDINE', strength: '20 mg' }] }
 };
 
-// 2. 전체 수의학 처방약 동의어/상표명-성분명 그룹 전면 확장
+// 2. 전체 수의학 처방약 정밀 동의어 그룹
 const ALIAS_GROUP_LIST = [
   { masterKey: 'doxycycline', aliases: ['doxycycline', 'vibramycin', 'doxy'] },
   { masterKey: 'enrofloxacin', aliases: ['enrofloxacin', 'baytril', 'enroflox'] },
@@ -95,8 +93,6 @@ const ALIAS_GROUP_LIST = [
   { masterKey: 'simparica', aliases: ['simparica', 'sarolaner'] },
   { masterKey: 'metronidazole', aliases: ['metronidazole', 'flagyl'] },
   { masterKey: 'tylosin', aliases: ['tylosin', 'tylan', 'tylosintartrate', 'tylosin tartrate'] },
-
-  // 신규 10종 완벽 추가
   { masterKey: 'tobrex', aliases: ['tobrex', 'tobramycin'] },
   { masterKey: 'ocuflox', aliases: ['ocuflox', 'ofloxacin'] },
   { masterKey: 'nizoral', aliases: ['nizoral', 'ketoconazole'] },
@@ -152,7 +148,6 @@ function normalizeString(str) {
   return str.toLowerCase().replace(/[^a-z0-9]/g, '');
 }
 
-// Universal Wildcard & Dynamic Lookup Engine
 async function lookupDrugFromDb(drugInput) {
   if (!drugInput) return null;
   const rawTerm = drugInput.trim();
@@ -160,11 +155,13 @@ async function lookupDrugFromDb(drugInput) {
   const normalizedTerm = normalizeString(rawTerm);
   const cleanDigits = rawTerm.replace(/[^0-9]/g, '');
 
-  // Step 1: 동의어/상표명-성분명 그룹 정규화 매칭
+  if (normalizedTerm.length < 3) return null;
+
+  // Step 1: 동의어/상표명 정밀 대조 (유효 약물 전체 일치 매칭)
   const matchedGroup = ALIAS_GROUP_LIST.find(group => 
     group.aliases.some(alias => {
       const normAlias = normalizeString(alias);
-      return normalizedTerm.includes(normAlias) || normAlias.includes(normalizedTerm);
+      return normalizedTerm === normAlias || (normalizedTerm.length >= 4 && normalizedTerm.includes(normAlias));
     })
   );
 
@@ -195,7 +192,9 @@ async function lookupDrugFromDb(drugInput) {
       const ndc11 = (d.ndc_11 || '').toLowerCase();
       const ingredients = d.active_ingredients || [];
 
-      if (propNorm.includes(normalizedTerm) || nonPropNorm.includes(normalizedTerm) || ndc.includes(lowerTerm)) {
+      if ((propNorm.length >= 3 && propNorm.includes(normalizedTerm)) || 
+          (nonPropNorm.length >= 3 && nonPropNorm.includes(normalizedTerm)) || 
+          ndc.includes(lowerTerm)) {
         return true;
       }
       if (cleanDigits.length >= 8 && ndc11.includes(cleanDigits)) {
@@ -204,7 +203,7 @@ async function lookupDrugFromDb(drugInput) {
 
       return ingredients.some(ing => {
         const ingNorm = normalizeString(ing.name || '');
-        return ingNorm.includes(normalizedTerm) || normalizedTerm.includes(ingNorm);
+        return ingNorm.length >= 3 && (ingNorm.includes(normalizedTerm) || normalizedTerm.includes(ingNorm));
       });
     });
 
@@ -220,20 +219,6 @@ async function lookupDrugFromDb(drugInput) {
         active_ingredients: matched.active_ingredients || [{ name: rawTerm, strength: '' }]
       };
     }
-  }
-
-  // Step 3: 수의학 3글자 이상 처방약명 입력 시 자동 openfda_db 승격 (안전망)
-  if (normalizedTerm.length >= 3) {
-    return {
-      name: rawTerm,
-      ndc_code: '00000-0000-00',
-      ndc_11: '00000000000',
-      ndc_source: "openfda_db",
-      ndc_verified: true,
-      product_type: "VETERINARY",
-      proprietary_name: rawTerm.toUpperCase(),
-      active_ingredients: [{ name: rawTerm.toUpperCase(), strength: '' }]
-    };
   }
 
   return null;
@@ -358,6 +343,6 @@ app.post('/v1/analyze', async (req, res) => {
 });
 
 app.listen(PORT, async () => {
-  console.log(`[seon] Fully-Guaranteed Universal Engine Active | Server running on port ${PORT}`);
+  console.log(`[seon] Strict Drug Verification Engine Active | Server running on port ${PORT}`);
   await ensureDrugDictionaryLoaded();
 });
