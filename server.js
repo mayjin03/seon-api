@@ -95,7 +95,11 @@ const MASTER_DRUG_RECORDS = {
   gabapentin: { ndc_code: '00071-0801-01', ndc_11: '00071080101', proprietary_name: 'NEURONTIN', nonproprietary_name: 'GABAPENTIN', active_ingredients: [{ name: 'GABAPENTIN', strength: '100 mg' }] },
   carprofen: { ndc_code: '00069-0520-01', ndc_11: '00069052001', proprietary_name: 'RIMADYL', nonproprietary_name: 'CARPROFEN', active_ingredients: [{ name: 'CARPROFEN', strength: '25 mg' }] },
   furosemide: { ndc_code: '00010-3101-01', ndc_11: '00010310101', proprietary_name: 'SALIX / LASIX', nonproprietary_name: 'FUROSEMIDE', active_ingredients: [{ name: 'FUROSEMIDE', strength: '50 mg' }] },
-  prednisolone: { ndc_code: '00054-4741-25', ndc_11: '00054474125', proprietary_name: 'PREDNISOLONE', nonproprietary_name: 'PREDNISOLONE', active_ingredients: [{ name: 'PREDNISOLONE', strength: '5 mg' }] }
+  prednisolone: { ndc_code: '00054-4741-25', ndc_11: '00054474125', proprietary_name: 'PREDNISOLONE', nonproprietary_name: 'PREDNISOLONE', active_ingredients: [{ name: 'PREDNISOLONE', strength: '5 mg' }] },
+  // APOQUEL(oclacitinib maleate tablet), Zoetis. NADA 141345(개 전용 가려움증 치료제, 실제 FDA
+  // 라벨 검증 완료). active_ingredients[0].name 을 'OCLACITINIB MALEATE'로 통일해서, "Apoquel"로
+  // 입력하든 "Oclacitinib"으로 입력하든 대사 부하 계산이 항상 이 같은 성분명 하나만 보게 해요.
+  oclacitinib: { ndc_code: '54771-8722-3', ndc_11: '54771872203', proprietary_name: 'APOQUEL', nonproprietary_name: 'OCLACITINIB MALEATE', active_ingredients: [{ name: 'OCLACITINIB MALEATE', strength: '5.4 mg' }] }
 };
 
 const ALIAS_GROUP_LIST = [
@@ -105,7 +109,8 @@ const ALIAS_GROUP_LIST = [
   { masterKey: 'gabapentin', aliases: ['gabapentin', 'neurontin'] },
   { masterKey: 'carprofen', aliases: ['carprofen', 'rimadyl', 'carprovet'] },
   { masterKey: 'furosemide', aliases: ['furosemide', 'salix', 'lasix'] },
-  { masterKey: 'prednisolone', aliases: ['prednisolone', 'prednisolon', 'delta-cortef'] }
+  { masterKey: 'prednisolone', aliases: ['prednisolone', 'prednisolon', 'delta-cortef'] },
+  { masterKey: 'oclacitinib', aliases: ['oclacitinib', 'apoquel', 'oclacitinibmaleate'] }
 ];
 
 if (SUPABASE_URL && SUPABASE_KEY) {
@@ -159,7 +164,38 @@ function normalizeString(str) {
   return str.toLowerCase().replace(/[^a-z0-9가-힣]/g, '');
 }
 
+// "Oclacitinib (Apoquel)" 처럼 성분명과 상표명이 괄호로 함께 들어오면, 괄호 앞(주 텍스트)과
+// 괄호 안(부가 텍스트)을 분리해요. 괄호가 없으면 원문 그대로 primary 로 돌려줘요.
+function splitParenthetical(raw) {
+  if (typeof raw !== 'string') return { primary: raw, parenthetical: null };
+  const m = raw.trim().match(/^(.*?)\s*\(([^()]+)\)\s*$/);
+  if (!m) return { primary: raw.trim(), parenthetical: null };
+  return { primary: m[1].trim(), parenthetical: m[2].trim() || null };
+}
+
+// [약물명 파싱 강화] "Oclacitinib (Apoquel)" / "Apoquel (Oclacitinib)" 처럼 성분명·상표명이
+// 괄호로 섞여 들어와도 에러 없이 처리돼요. 원문 전체로 먼저 찾아보고(드물지만 DB에 그 전체
+// 문자열이 그대로 등록돼 있을 수도 있으니), 없으면 괄호 앞부분 -> 괄호 안 부분 순서로 각각
+// 독립적으로 조회해요. 셋 중 어느 하나라도 매칭되면 그 결과를 그대로 써요.
 async function lookupDrugFromDb(drugInput) {
+  if (typeof drugInput !== 'string' || !drugInput.trim()) return null;
+
+  const direct = await lookupDrugSingleTerm(drugInput);
+  if (direct) return direct;
+
+  const { primary, parenthetical } = splitParenthetical(drugInput);
+  if (primary && primary !== drugInput.trim()) {
+    const byPrimary = await lookupDrugSingleTerm(primary);
+    if (byPrimary) return { ...byPrimary, name: drugInput };
+  }
+  if (parenthetical) {
+    const byParenthetical = await lookupDrugSingleTerm(parenthetical);
+    if (byParenthetical) return { ...byParenthetical, name: drugInput };
+  }
+  return null;
+}
+
+async function lookupDrugSingleTerm(drugInput) {
   // [강화] 문자열이 아닌 입력(숫자·null·객체 등)이 들어와도 500으로 죽지 않도록 방어해요.
   if (typeof drugInput !== 'string' || !drugInput.trim()) return null;
   let rawTerm = drugInput.trim();
@@ -277,7 +313,13 @@ async function evaluateDniConflictsFromDb(prescriptions, supplements) {
     const suppList = Array.isArray(supplements) ? supplements : [supplements];
 
     for (const rx of prescriptions) {
-      const rxName = (typeof rx.name === 'string' ? rx.name : String(rx.name ?? '')).toLowerCase();
+      // [성분 기준 단일화] DNI 충돌 판정도 대사 부하 계산과 같은 원칙을 써요 — 상표명/성분명
+      // 어느 쪽으로 입력했든 이미 확정된 유효 성분명을 기준으로 삼아, 규칙표(ingredient_keywords)
+      // 매칭이 입력한 표현 방식에 따라 달라지지 않게 해요.
+      const canonicalRxName = (Array.isArray(rx.active_ingredients) && rx.active_ingredients[0] && rx.active_ingredients[0].name)
+        ? rx.active_ingredients[0].name
+        : rx.name;
+      const rxName = (typeof canonicalRxName === 'string' ? canonicalRxName : String(canonicalRxName ?? '')).toLowerCase();
       
       for (const supp of suppList) {
         if (!supp) continue;
@@ -332,7 +374,15 @@ async function calculateMetabolicStrainIndices(prescriptions, supplements) {
   }
 
   for (const rx of prescriptions) {
-    const rxNameLower = (typeof rx.name === 'string' ? rx.name : String(rx.name ?? '')).toLowerCase();
+    // [성분 기준 단일화] "Apoquel"로 입력하든 "Oclacitinib"으로 입력하든, 이미 검증 단계
+    // (lookupDrugFromDb)에서 확정된 유효 성분명(active_ingredients[0].name)을 최우선으로 써요.
+    // 그래야 상표명/성분명/괄호 혼합형 어느 쪽으로 입력해도 같은 문자열을 기준으로 가중치를
+    // 찾아서 항상 같은 수치가 나와요. 미인식 약물이라 그 필드가 없으면(예: UNKNOWN 처리된
+    // 경우 active_ingredients[0].name 이 원래 입력값 그대로라) 기존처럼 rx.name 으로 대체돼요.
+    const canonicalName = (Array.isArray(rx.active_ingredients) && rx.active_ingredients[0] && rx.active_ingredients[0].name)
+      ? rx.active_ingredients[0].name
+      : rx.name;
+    const rxNameLower = (typeof canonicalName === 'string' ? canonicalName : String(canonicalName ?? '')).toLowerCase();
     const freq = rx.frequency_per_day || 1;
 
     const dbRule = cypRules.find(r => 
@@ -352,6 +402,13 @@ async function calculateMetabolicStrainIndices(prescriptions, supplements) {
       } else if (rxNameLower.includes('furo') || rxNameLower.includes('gaba')) {
         hepaticRaw += 0.15 * freq * 35;
         renalRaw += 0.80 * freq * 35;
+      } else if (rxNameLower.includes('oclacitinib') || rxNameLower.includes('apoquel')) {
+        // [신규] Oclacitinib(Apoquel) 전용 가중치예요. JAK1 억제제로 주로 간에서 대사되고
+        // (canine CYP450 억제 영향은 미미하다고 라벨에 명시돼 있어요) 신장 배출 비중은 낮아서,
+        // 간 쪽에 조금 더 무게를 둔 값으로 등록했어요. 이 파일의 다른 하드코딩 값들과 마찬가지로
+        // 정밀 약동학 문헌값이 아니라 데모용 근사치라, 실제 임상 기준이 있으면 교체해 주세요.
+        hepaticRaw += 0.55 * freq * 30;
+        renalRaw += 0.25 * freq * 30;
       } else {
         hepaticRaw += 0.35 * freq * 30;
         renalRaw += 0.35 * freq * 30;
