@@ -15,6 +15,65 @@ let supabase = null;
 let drugDictionaryCache = [];
 let isCacheLoading = false;
 
+// 0. B2B API Key 인증 및 요청 수 제한(Rate Limiter) 설정
+const VALID_API_KEYS = new Set([
+  process.env.SEON_DEMO_API_KEY || 'seon_demo_pk_12345',
+  process.env.SEON_LIVE_API_KEY || 'seon_live_pk_67890'
+]);
+
+// 메모리 기반 Rate Limiter (분당 최대 60회)
+const rateLimitMap = new Map();
+const RATE_LIMIT_WINDOW_MS = 60 * 1000;
+const MAX_REQUESTS_PER_WINDOW = 60;
+
+const rateLimiter = (req, res, next) => {
+  const clientKey = req.headers['x-api-key'] || req.ip;
+  const now = Date.now();
+
+  if (!rateLimitMap.has(clientKey)) {
+    rateLimitMap.set(clientKey, { count: 1, resetTime: now + RATE_LIMIT_WINDOW_MS });
+    return next();
+  }
+
+  const clientStats = rateLimitMap.get(clientKey);
+
+  if (now > clientStats.resetTime) {
+    clientStats.count = 1;
+    clientStats.resetTime = now + RATE_LIMIT_WINDOW_MS;
+    return next();
+  }
+
+  if (clientStats.count >= MAX_REQUESTS_PER_WINDOW) {
+    return res.status(429).json({
+      status: 'TOO_MANY_REQUESTS',
+      message: '429 Too Many Requests: 분당 요청 한도(60회)를 초과했습니다. 잠시 후 다시 시도해주세요.'
+    });
+  }
+
+  clientStats.count += 1;
+  next();
+};
+
+// API Key 인증 미들웨어
+const authenticateApiKey = (req, res, next) => {
+  const apiKey = req.headers['x-api-key'];
+
+  // 샌드박스 및 데모용 패스스루 허용 (x-api-key 미전송 시 기본 데모 키로 간주 처리)
+  if (!apiKey) {
+    req.headers['x-api-key'] = 'seon_demo_pk_12345';
+    return next();
+  }
+
+  if (!VALID_API_KEYS.has(apiKey)) {
+    return res.status(401).json({
+      status: 'UNAUTHORIZED',
+      message: '401 Unauthorized: 유효하지 않은 x-api-key 입니다.'
+    });
+  }
+
+  next();
+};
+
 // 스펠링 오타 정밀 교정 테이블 (단어 완전 일치 기준)
 const TYPO_MAP = {
   'doxycyclin': 'doxycycline',
@@ -315,7 +374,8 @@ app.get('/health', async (req, res) => {
   res.json({ status: 'ok', cached_drugs: drugDictionaryCache.length, timestamp: new Date().toISOString() });
 });
 
-app.post('/v1/analyze', async (req, res) => {
+// v1 분석 엔드포인트: Rate Limiter 및 API Key 인증 미들웨어 적용
+app.post('/v1/analyze', rateLimiter, authenticateApiKey, async (req, res) => {
   try {
     await ensureDrugDictionaryLoaded();
 
