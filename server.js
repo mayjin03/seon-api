@@ -15,96 +15,6 @@ let supabase = null;
 let drugDictionaryCache = [];
 let isCacheLoading = false;
 
-// 1. 수의학 전 처방약 마스터 레코드
-const MASTER_DRUG_RECORDS = {
-  doxycycline: { ndc_code: '00069-0960-01', ndc_11: '00069096001', proprietary_name: 'VIBRAMYCIN', nonproprietary_name: 'DOXYCYCLINE MONOHYDRATE', active_ingredients: [{ name: 'DOXYCYCLINE MONOHYDRATE', strength: '100 mg' }] },
-  enrofloxacin: { ndc_code: '81471-693-00', ndc_11: '81471069300', proprietary_name: 'BAYTRIL', nonproprietary_name: 'ENROFLOXACIN', active_ingredients: [{ name: 'ENROFLOXACIN', strength: '22.7 mg' }] },
-  labetalol: { ndc_code: '06158-513-00', ndc_11: '06158051300', proprietary_name: 'LABETALOL HYDROCHLORIDE', nonproprietary_name: 'LABETALOL HYDROCHLORIDE', active_ingredients: [{ name: 'LABETALOL HYDROCHLORIDE', strength: '100 mg' }] },
-  benazepril: { ndc_code: '50090-428-04', ndc_11: '50090042804', proprietary_name: 'BENAZEPRIL HYDROCHLORIDE', nonproprietary_name: 'BENAZEPRIL HYDROCHLORIDE', active_ingredients: [{ name: 'BENAZEPRIL HYDROCHLORIDE', strength: '5 mg' }] },
-  orbifloxacin: { ndc_code: '00061-1141-01', ndc_11: '00061114101', proprietary_name: 'ORBAX', nonproprietary_name: 'ORBIFLOXACIN', active_ingredients: [{ name: 'ORBIFLOXACIN', strength: '22.7 mg' }] },
-  pimobendan: { ndc_code: '00010-4411-01', ndc_11: '00010441101', proprietary_name: 'VETMEDIN', nonproprietary_name: 'PIMOBENDAN', active_ingredients: [{ name: 'PIMOBENDAN', strength: '1.25 mg' }] },
-  clavamox: { ndc_code: '00069-1220-01', ndc_11: '00069122001', proprietary_name: 'CLAVAMOX', nonproprietary_name: 'AMOXI/CLAVULANATE POTASSIUM', active_ingredients: [{ name: 'AMOXI/CLAVULANATE POTASSIUM', strength: '62.5 mg' }] },
-  apoquel: { ndc_code: '00069-0180-01', ndc_11: '00069018001', proprietary_name: 'APOQUEL', nonproprietary_name: 'OCLACITINIB MALEATE', active_ingredients: [{ name: 'OCLACITINIB MALEATE', strength: '3.6 mg' }] },
-  cerenia: { ndc_code: '00069-0510-01', ndc_11: '00069051001', proprietary_name: 'CERENIA', nonproprietary_name: 'MAROPITANT CITRATE', active_ingredients: [{ name: 'MAROPITANT CITRATE', strength: '16 mg' }] },
-  metacam: { ndc_code: '00010-6011-01', ndc_11: '00010601101', proprietary_name: 'METACAM', nonproprietary_name: 'MELOXICAM', active_ingredients: [{ name: 'MELOXICAM', strength: '1.5 mg/mL' }] },
-  temaril: { ndc_code: '00069-3110-01', ndc_11: '00069311001', proprietary_name: 'TEMARIL-P', nonproprietary_name: 'TRIMEPRAZINE/PREDNISOLONE', active_ingredients: [{ name: 'PREDNISOLONE', strength: '5 mg' }] },
-  gabapentin: { ndc_code: '00071-0801-01', ndc_11: '00071080101', proprietary_name: 'NEURONTIN', nonproprietary_name: 'GABAPENTIN', active_ingredients: [{ name: 'GABAPENTIN', strength: '100 mg' }] },
-  alfaxalone: { ndc_code: '60267-001-01', ndc_11: '60267000101', proprietary_name: 'ALFAXAN', nonproprietary_name: 'ALFAXALONE', active_ingredients: [{ name: 'ALFAXALONE', strength: '10 mg/mL' }] },
-  grapiprant: { ndc_code: '00010-4530-01', ndc_11: '00010453001', proprietary_name: 'GALLIPRANT', nonproprietary_name: 'GRAPIPRANT', active_ingredients: [{ name: 'GRAPIPRANT', strength: '20 mg' }] },
-  carprofen: { ndc_code: '00069-0520-01', ndc_11: '00069052001', proprietary_name: 'RIMADYL', nonproprietary_name: 'CARPROFEN', active_ingredients: [{ name: 'CARPROFEN', strength: '25 mg' }] },
-  levetiracetam: { ndc_code: '50474-594-01', ndc_11: '50474059401', proprietary_name: 'KEPPRA', nonproprietary_name: 'LEVETIRACETAM', active_ingredients: [{ name: 'LEVETIRACETAM', strength: '250 mg' }] },
-  methimazole: { ndc_code: '43261-001-01', ndc_11: '43261000101', proprietary_name: 'FELIMAZOLE', nonproprietary_name: 'METHIMAZOLE', active_ingredients: [{ name: 'METHIMAZOLE', strength: '2.5 mg' }] },
-  furosemide: { ndc_code: '00010-3101-01', ndc_11: '00010310101', proprietary_name: 'SALIX / LASIX', nonproprietary_name: 'FUROSEMIDE', active_ingredients: [{ name: 'FUROSEMIDE', strength: '50 mg' }] },
-  spironolactone: { ndc_code: '00025-1031-01', ndc_11: '00025103101', proprietary_name: 'ALDACTONE', nonproprietary_name: 'SPIRONOLACTONE', active_ingredients: [{ name: 'SPIRONOLACTONE', strength: '25 mg' }] },
-  amlodipine: { ndc_code: '00069-1520-01', ndc_11: '00069152001', proprietary_name: 'NORVASC', nonproprietary_name: 'AMLODIPINE BESYLATE', active_ingredients: [{ name: 'AMLODIPINE BESYLATE', strength: '2.5 mg' }] },
-  cyclosporine: { ndc_code: '00058-0240-01', ndc_11: '00058024001', proprietary_name: 'ATOPICA', nonproprietary_name: 'CYCLOSPORINE', active_ingredients: [{ name: 'CYCLOSPORINE', strength: '100 mg/mL' }] },
-  sucralfate: { ndc_code: '50474-710-01', ndc_11: '50474071001', proprietary_name: 'CARAFATE', nonproprietary_name: 'SUCRALFATE', active_ingredients: [{ name: 'SUCRALFATE', strength: '1 g' }] },
-  omeprazole: { ndc_code: '00006-0038-01', ndc_11: '00006003801', proprietary_name: 'GASTROGARD', nonproprietary_name: 'OMEPRAZOLE', active_ingredients: [{ name: 'OMEPRAZOLE', strength: '2.28 g' }] },
-  tramadol: { ndc_code: '50474-610-01', ndc_11: '50474061001', proprietary_name: 'ULTRAM', nonproprietary_name: 'TRAMADOL HYDROCHLORIDE', active_ingredients: [{ name: 'TRAMADOL HYDROCHLORIDE', strength: '50 mg' }] },
-  adequan: { ndc_code: '10797-001-05', ndc_11: '10797000105', proprietary_name: 'ADEQUAN CANINE', nonproprietary_name: 'POLYSULFATED GLYCOSAMINOGLYCAN', active_ingredients: [{ name: 'POLYSULFATED GLYCOSAMINOGLYCAN', strength: '100 mg/mL' }] },
-  interceptor: { ndc_code: '00058-0130-01', ndc_11: '00058013001', proprietary_name: 'INTERCEPTOR', nonproprietary_name: 'MILBEMYCIN OXIME', active_ingredients: [{ name: 'MILBEMYCIN OXIME', strength: '2.3 mg' }] },
-  bravecto: { ndc_code: '00061-4321-01', ndc_11: '00061432101', proprietary_name: 'BRAVECTO', nonproprietary_name: 'FLURALANER', active_ingredients: [{ name: 'FLURALANER', strength: '250 mg' }] },
-  nexgard: { ndc_code: '00010-4351-01', ndc_11: '00010435101', proprietary_name: 'NEXGARD', nonproprietary_name: 'AFOXOLANER', active_ingredients: [{ name: 'AFOXOLANER', strength: '28.3 mg' }] },
-  simparica: { ndc_code: '00069-0231-01', ndc_11: '00069023101', proprietary_name: 'SIMPARICA', nonproprietary_name: 'SAROLANER', active_ingredients: [{ name: 'SAROLANER', strength: '10 mg' }] },
-  metronidazole: { ndc_code: '00058-0410-01', ndc_11: '00058041001', proprietary_name: 'FLAGYL', nonproprietary_name: 'METRONIDAZOLE', active_ingredients: [{ name: 'METRONIDAZOLE', strength: '250 mg' }] },
-  tylosin: { ndc_code: '00098-0511-01', ndc_11: '00098051101', proprietary_name: 'TYLAN', nonproprietary_name: 'TYLOSIN TARTRATE', active_ingredients: [{ name: 'TYLOSIN TARTRATE', strength: '100 g' }] },
-  tobrex: { ndc_code: '00065-0644-05', ndc_11: '00065064405', proprietary_name: 'TOBREX', nonproprietary_name: 'TOBRAMYCIN', active_ingredients: [{ name: 'TOBRAMYCIN', strength: '0.3%' }] },
-  ocuflox: { ndc_code: '00023-9188-05', ndc_11: '00023918805', proprietary_name: 'OCUFLOX', nonproprietary_name: 'OFLOXACIN', active_ingredients: [{ name: 'OFLOXACIN', strength: '0.3%' }] },
-  nizoral: { ndc_code: '50458-223-06', ndc_11: '50458022306', proprietary_name: 'NIZORAL', nonproprietary_name: 'KETOCONAZOLE', active_ingredients: [{ name: 'KETOCONAZOLE', strength: '200 mg' }] },
-  itraconazole: { ndc_code: '50474-702-01', ndc_11: '50474070201', proprietary_name: 'SPORANOX', nonproprietary_name: 'ITRACONAZOLE', active_ingredients: [{ name: 'ITRACONAZOLE', strength: '100 mg' }] },
-  cefpodoxime: { ndc_code: '00010-4401-01', ndc_11: '00010440101', proprietary_name: 'SIMPLICEF', nonproprietary_name: 'CEFPODOXIME PROXETIL', active_ingredients: [{ name: 'CEFPODOXIME PROXETIL', strength: '100 mg' }] },
-  simplicef: { ndc_code: '00010-4401-01', ndc_11: '00010440101', proprietary_name: 'SIMPLICEF', nonproprietary_name: 'CEFPODOXIME PROXETIL', active_ingredients: [{ name: 'CEFPODOXIME PROXETIL', strength: '100 mg' }] },
-  keflex: { ndc_code: '00006-0012-01', ndc_11: '00006001201', proprietary_name: 'KEFLEX', nonproprietary_name: 'CEPHALEXIN', active_ingredients: [{ name: 'CEPHALEXIN', strength: '500 mg' }] },
-  zeniquin: { ndc_code: '00069-1140-01', ndc_11: '00069114001', proprietary_name: 'ZENIQUIN', nonproprietary_name: 'MARBOFLOXACIN', active_ingredients: [{ name: 'MARBOFLOXACIN', strength: '25 mg' }] },
-  reglan: { ndc_code: '00031-6701-01', ndc_11: '00031670101', proprietary_name: 'REGLAN', nonproprietary_name: 'METOCLOPRAMIDE HYDROCHLORIDE', active_ingredients: [{ name: 'METOCLOPRAMIDE HYDROCHLORIDE', strength: '10 mg' }] },
-  pepcid: { ndc_code: '00006-0040-01', ndc_11: '00006004001', proprietary_name: 'PEPCID', nonproprietary_name: 'FAMOTIDINE', active_ingredients: [{ name: 'FAMOTIDINE', strength: '20 mg' }] }
-};
-
-// 2. 전체 수의학 처방약 정밀 동의어 그룹
-const ALIAS_GROUP_LIST = [
-  { masterKey: 'doxycycline', aliases: ['doxycycline', 'vibramycin', 'doxy'] },
-  { masterKey: 'enrofloxacin', aliases: ['enrofloxacin', 'baytril', 'enroflox'] },
-  { masterKey: 'labetalol', aliases: ['labetalol'] },
-  { masterKey: 'benazepril', aliases: ['benazepril', 'lotensin'] },
-  { masterKey: 'orbifloxacin', aliases: ['orbifloxacin', 'orbax'] },
-  { masterKey: 'pimobendan', aliases: ['pimobendan', 'vetmedin'] },
-  { masterKey: 'clavamox', aliases: ['clavamox', 'amoxicillin', 'amoxi'] },
-  { masterKey: 'apoquel', aliases: ['apoquel', 'oclacitinib'] },
-  { masterKey: 'cerenia', aliases: ['cerenia', 'maropitant'] },
-  { masterKey: 'metacam', aliases: ['metacam', 'meloxicam'] },
-  { masterKey: 'temaril', aliases: ['temaril', 'temarilp', 'temaril-p', 'prednisolone'] },
-  { masterKey: 'gabapentin', aliases: ['gabapentin', 'neurontin'] },
-  { masterKey: 'alfaxalone', aliases: ['alfaxalone', 'alfaxan', 'alfax'] },
-  { masterKey: 'grapiprant', aliases: ['grapiprant', 'galliprant'] },
-  { masterKey: 'carprofen', aliases: ['carprofen', 'rimadyl', 'carprovet'] },
-  { masterKey: 'levetiracetam', aliases: ['levetiracetam', 'keppra'] },
-  { masterKey: 'methimazole', aliases: ['methimazole', 'felimazole'] },
-  { masterKey: 'furosemide', aliases: ['furosemide', 'salix', 'lasix'] },
-  { masterKey: 'spironolactone', aliases: ['spironolactone', 'aldactone'] },
-  { masterKey: 'amlodipine', aliases: ['amlodipine', 'norvasc'] },
-  { masterKey: 'cyclosporine', aliases: ['cyclosporine', 'atopica'] },
-  { masterKey: 'sucralfate', aliases: ['sucralfate', 'carafate'] },
-  { masterKey: 'omeprazole', aliases: ['omeprazole', 'gastrogard'] },
-  { masterKey: 'tramadol', aliases: ['tramadol', 'ultram'] },
-  { masterKey: 'adequan', aliases: ['adequan', 'polysulfatedglycosaminoglycan', 'polysulfated glycosaminoglycan', 'psgag'] },
-  { masterKey: 'interceptor', aliases: ['interceptor', 'milbemycin', 'milbemycinoxime', 'milbemycin oxime'] },
-  { masterKey: 'bravecto', aliases: ['bravecto', 'fluralaner'] },
-  { masterKey: 'nexgard', aliases: ['nexgard', 'afoxolaner'] },
-  { masterKey: 'simparica', aliases: ['simparica', 'sarolaner'] },
-  { masterKey: 'metronidazole', aliases: ['metronidazole', 'flagyl'] },
-  { masterKey: 'tylosin', aliases: ['tylosin', 'tylan', 'tylosintartrate', 'tylosin tartrate'] },
-  { masterKey: 'tobrex', aliases: ['tobrex', 'tobramycin'] },
-  { masterKey: 'ocuflox', aliases: ['ocuflox', 'ofloxacin'] },
-  { masterKey: 'nizoral', aliases: ['nizoral', 'ketoconazole'] },
-  { masterKey: 'itraconazole', aliases: ['itraconazole', 'sporanox'] },
-  { masterKey: 'cefpodoxime', aliases: ['cefpodoxime', 'simplicef', 'cefpodoximeproxetil'] },
-  { masterKey: 'simplicef', aliases: ['simplicef', 'cefpodoxime'] },
-  { masterKey: 'keflex', aliases: ['keflex', 'cephalexin'] },
-  { masterKey: 'zeniquin', aliases: ['zeniquin', 'marbofloxacin'] },
-  { masterKey: 'reglan', aliases: ['reglan', 'metoclopramide'] },
-  { masterKey: 'pepcid', aliases: ['pepcid', 'famotidine'] }
-];
-
 if (SUPABASE_URL && SUPABASE_KEY) {
   supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
   console.log('[seon] Supabase: connected');
@@ -112,6 +22,7 @@ if (SUPABASE_URL && SUPABASE_KEY) {
   console.warn('[seon] Supabase credentials missing');
 }
 
+// openFDA 수의용 사전 메모리 완벽 적재
 async function ensureDrugDictionaryLoaded() {
   if (drugDictionaryCache.length > 0) return true;
   if (!supabase) return false;
@@ -143,11 +54,13 @@ async function ensureDrugDictionaryLoaded() {
   return drugDictionaryCache.length > 0;
 }
 
+// 알파벳과 숫자만 남기는 정규화 함수
 function normalizeString(str) {
   if (!str) return '';
   return str.toLowerCase().replace(/[^a-z0-9]/g, '');
 }
 
+// 범용 유연 검색 엔진 (DB 997개 전수 유연 매칭)
 async function lookupDrugFromDb(drugInput) {
   if (!drugInput) return null;
   const rawTerm = drugInput.trim();
@@ -155,33 +68,9 @@ async function lookupDrugFromDb(drugInput) {
   const normalizedTerm = normalizeString(rawTerm);
   const cleanDigits = rawTerm.replace(/[^0-9]/g, '');
 
+  // 3글자 미만 단순 노이즈 차단
   if (normalizedTerm.length < 3) return null;
 
-  // Step 1: 동의어/상표명 정밀 대조 (유효 약물 전체 일치 매칭)
-  const matchedGroup = ALIAS_GROUP_LIST.find(group => 
-    group.aliases.some(alias => {
-      const normAlias = normalizeString(alias);
-      return normalizedTerm === normAlias || (normalizedTerm.length >= 4 && normalizedTerm.includes(normAlias));
-    })
-  );
-
-  if (matchedGroup) {
-    const mapped = MASTER_DRUG_RECORDS[matchedGroup.masterKey];
-    if (mapped) {
-      return {
-        name: rawTerm,
-        ndc_code: mapped.ndc_code,
-        ndc_11: mapped.ndc_11,
-        ndc_source: "openfda_db",
-        ndc_verified: true,
-        product_type: "VETERINARY",
-        proprietary_name: mapped.proprietary_name,
-        active_ingredients: mapped.active_ingredients
-      };
-    }
-  }
-
-  // Step 2: openFDA DB 메모리 캐시 전수 정밀 탐색
   await ensureDrugDictionaryLoaded();
 
   if (drugDictionaryCache.length > 0) {
@@ -192,18 +81,18 @@ async function lookupDrugFromDb(drugInput) {
       const ndc11 = (d.ndc_11 || '').toLowerCase();
       const ingredients = d.active_ingredients || [];
 
-      if ((propNorm.length >= 3 && propNorm.includes(normalizedTerm)) || 
-          (nonPropNorm.length >= 3 && nonPropNorm.includes(normalizedTerm)) || 
-          ndc.includes(lowerTerm)) {
-        return true;
-      }
-      if (cleanDigits.length >= 8 && ndc11.includes(cleanDigits)) {
-        return true;
-      }
+      // 1. 상표명 / 일반명 / NDC 코드 비교
+      if (propNorm.includes(normalizedTerm) || normalizedTerm.includes(propNorm) && propNorm.length >= 3) return true;
+      if (nonPropNorm.includes(normalizedTerm) || normalizedTerm.includes(nonPropNorm) && nonPropNorm.length >= 3) return true;
+      if (ndc.includes(lowerTerm)) return true;
+      if (cleanDigits.length >= 8 && ndc11.includes(cleanDigits)) return true;
 
+      // 2. 성분명(active_ingredients) 염/수식어 자동 무시 유연 매칭 (핵심)
       return ingredients.some(ing => {
         const ingNorm = normalizeString(ing.name || '');
-        return ingNorm.length >= 3 && (ingNorm.includes(normalizedTerm) || normalizedTerm.includes(ingNorm));
+        if (ingNorm.length < 3) return false;
+        // 입력값(pyrantel)이 DB 성분명(pyrantelpamoate)에 포함되거나 그 반대인 경우 무조건 매칭
+        return ingNorm.includes(normalizedTerm) || normalizedTerm.includes(ingNorm);
       });
     });
 
@@ -343,6 +232,6 @@ app.post('/v1/analyze', async (req, res) => {
 });
 
 app.listen(PORT, async () => {
-  console.log(`[seon] Strict Drug Verification Engine Active | Server running on port ${PORT}`);
+  console.log(`[seon] Fully Universal DB DNI Engine Active | Server running on port ${PORT}`);
   await ensureDrugDictionaryLoaded();
 });
