@@ -19,15 +19,16 @@ if (SUPABASE_URL && SUPABASE_KEY) {
   console.warn('[seon] Supabase credentials missing');
 }
 
-// 하이브리드 약물 Lookup 함수 (상표명 + Generic 성분명 + JSONB 완전 커버)
+// 하이브리드 약물 Lookup 함수 (공식 contains 메서드 사용)
 async function lookupDrugFromDb(drugInput) {
   if (!drugInput || !supabase) return null;
   const searchTerm = drugInput.trim();
   const upperTerm = searchTerm.toUpperCase();
+  const lowerTerm = searchTerm.toLowerCase();
   const cleanDigits = searchTerm.replace(/[^0-9]/g, '');
 
   try {
-    // [STEP 1] proprietary_name, nonproprietary_name, ndc_code 검색
+    // 1. proprietary_name, nonproprietary_name, ndc_code 우선 검색
     const { data: step1Matches } = await supabase
       .from('fda_ndc_vet_dictionary')
       .select('*')
@@ -37,17 +38,27 @@ async function lookupDrugFromDb(drugInput) {
       return formatDbResult(step1Matches[0], searchTerm);
     }
 
-    // [STEP 2] JSONB active_ingredients 내부 성분명 검색 (Contains / ilike)
-    const { data: step2Matches } = await supabase
+    // 2. JSONB active_ingredients 공식 contains 매칭 (대문자)
+    const { data: step2MatchesUpper } = await supabase
       .from('fda_ndc_vet_dictionary')
       .select('*')
-      .filter('active_ingredients', 'cs', JSON.stringify([{ name: upperTerm }]));
+      .contains('active_ingredients', [{ name: upperTerm }]);
 
-    if (step2Matches && step2Matches.length > 0) {
-      return formatDbResult(step2Matches[0], searchTerm);
+    if (step2MatchesUpper && step2MatchesUpper.length > 0) {
+      return formatDbResult(step2MatchesUpper[0], searchTerm);
     }
 
-    // [STEP 3] active_ingredients JSONB 텍스트 전체 ilike 검색 (유연한 단어 매칭)
+    // 3. JSONB active_ingredients 공식 contains 매칭 (소문자/원문)
+    const { data: step2MatchesLower } = await supabase
+      .from('fda_ndc_vet_dictionary')
+      .select('*')
+      .contains('active_ingredients', [{ name: searchTerm }]);
+
+    if (step2MatchesLower && step2MatchesLower.length > 0) {
+      return formatDbResult(step2MatchesLower[0], searchTerm);
+    }
+
+    // 4. active_ingredients 텍스트 ilike 전체 검색
     const { data: step3Matches } = await supabase
       .from('fda_ndc_vet_dictionary')
       .select('*')
@@ -57,7 +68,7 @@ async function lookupDrugFromDb(drugInput) {
       return formatDbResult(step3Matches[0], searchTerm);
     }
 
-    // [STEP 4] NDC 11자리 숫자 부분 검색
+    // 5. NDC 11자리 숫자 검색
     if (cleanDigits.length >= 8) {
       const { data: step4Matches } = await supabase
         .from('fda_ndc_vet_dictionary')
@@ -75,7 +86,7 @@ async function lookupDrugFromDb(drugInput) {
   return null;
 }
 
-// DB 검색 결과 반환 포맷터
+// DB 검색 결과 포맷터
 function formatDbResult(matched, inputTerm) {
   return {
     name: matched.proprietary_name || matched.nonproprietary_name || inputTerm,
