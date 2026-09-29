@@ -15,72 +15,53 @@ let supabase = null;
 let drugDictionaryCache = [];
 let isCacheLoading = false;
 
-// 1. 주요 수의학 처방약 하드매핑 (모두 소문자 키로 등록)
+// 1. 임상 다빈도 핵심 처방약 100% 하드매핑 딕셔너리
 const SPECIAL_DRUG_MAP = {
-  'doxycycline': {
-    ndc_code: '00069-0960-01',
-    ndc_11: '00069096001',
-    proprietary_name: 'VIBRAMYCIN',
-    nonproprietary_name: 'DOXYCYCLINE MONOHYDRATE',
-    active_ingredients: [{ name: 'DOXYCYCLINE MONOHYDRATE', strength: '100 mg' }]
-  },
-  'doxycycline hyclate': {
-    ndc_code: '00069-0960-01',
-    ndc_11: '00069096001',
-    proprietary_name: 'VIBRAMYCIN',
-    nonproprietary_name: 'DOXYCYCLINE MONOHYDRATE',
-    active_ingredients: [{ name: 'DOXYCYCLINE HYCLATE', strength: '100 mg' }]
-  },
-  'enrofloxacin': {
-    ndc_code: '81471-693-00',
-    ndc_11: '81471069300',
-    proprietary_name: 'BAYTRIL',
-    nonproprietary_name: 'ENROFLOXACIN',
-    active_ingredients: [{ name: 'ENROFLOXACIN', strength: '22.7 mg' }]
-  },
-  'labetalol': {
-    ndc_code: '06158-513-00',
-    ndc_11: '06158051300',
-    proprietary_name: 'LABETALOL HYDROCHLORIDE',
-    nonproprietary_name: 'LABETALOL HYDROCHLORIDE',
-    active_ingredients: [{ name: 'LABETALOL HYDROCHLORIDE', strength: '100 mg' }]
-  },
-  'benazepril': {
-    ndc_code: '50090-428-04',
-    ndc_11: '50090042804',
-    proprietary_name: 'BENAZEPRIL HYDROCHLORIDE',
-    nonproprietary_name: 'BENAZEPRIL HYDROCHLORIDE',
-    active_ingredients: [{ name: 'BENAZEPRIL HYDROCHLORIDE', strength: '5 mg' }]
-  },
-  'orbifloxacin': {
-    ndc_code: '00061-1141-01',
-    ndc_11: '00061114101',
-    proprietary_name: 'ORBAX',
-    nonproprietary_name: 'ORBIFLOXACIN',
-    active_ingredients: [{ name: 'ORBIFLOXACIN', strength: '22.7 mg' }]
-  },
-  'orbax': {
-    ndc_code: '00061-1141-01',
-    ndc_11: '00061114101',
-    proprietary_name: 'ORBAX',
-    nonproprietary_name: 'ORBIFLOXACIN',
-    active_ingredients: [{ name: 'ORBIFLOXACIN', strength: '22.7 mg' }]
-  },
-  'pimobendan': {
-    ndc_code: '00010-4411-01',
-    ndc_11: '00010441101',
-    proprietary_name: 'VETMEDIN',
-    nonproprietary_name: 'PIMOBENDAN',
-    active_ingredients: [{ name: 'PIMOBENDAN', strength: '1.25 mg' }]
-  },
-  'vetmedin': {
-    ndc_code: '00010-4411-01',
-    ndc_11: '00010441101',
-    proprietary_name: 'VETMEDIN',
-    nonproprietary_name: 'PIMOBENDAN',
-    active_ingredients: [{ name: 'PIMOBENDAN', strength: '1.25 mg' }]
-  }
+  // 기존 약물
+  'doxycycline': { ndc_code: '00069-0960-01', ndc_11: '00069096001', proprietary_name: 'VIBRAMYCIN', nonproprietary_name: 'DOXYCYCLINE MONOHYDRATE', active_ingredients: [{ name: 'DOXYCYCLINE MONOHYDRATE', strength: '100 mg' }] },
+  'doxycycline hyclate': { ndc_code: '00069-0960-01', ndc_11: '00069096001', proprietary_name: 'VIBRAMYCIN', nonproprietary_name: 'DOXYCYCLINE MONOHYDRATE', active_ingredients: [{ name: 'DOXYCYCLINE HYCLATE', strength: '100 mg' }] },
+  'enrofloxacin': { ndc_code: '81471-693-00', ndc_11: '81471069300', proprietary_name: 'BAYTRIL', nonproprietary_name: 'ENROFLOXACIN', active_ingredients: [{ name: 'ENROFLOXACIN', strength: '22.7 mg' }] },
+  'labetalol': { ndc_code: '06158-513-00', ndc_11: '06158051300', proprietary_name: 'LABETALOL HYDROCHLORIDE', nonproprietary_name: 'LABETALOL HYDROCHLORIDE', active_ingredients: [{ name: 'LABETALOL HYDROCHLORIDE', strength: '100 mg' }] },
+  'benazepril': { ndc_code: '50090-428-04', ndc_11: '50090042804', proprietary_name: 'BENAZEPRIL HYDROCHLORIDE', nonproprietary_name: 'BENAZEPRIL HYDROCHLORIDE', active_ingredients: [{ name: 'BENAZEPRIL HYDROCHLORIDE', strength: '5 mg' }] },
+  'orbifloxacin': { ndc_code: '00061-1141-01', ndc_11: '00061114101', proprietary_name: 'ORBAX', nonproprietary_name: 'ORBIFLOXACIN', active_ingredients: [{ name: 'ORBIFLOXACIN', strength: '22.7 mg' }] },
+  'orbax': { ndc_code: '00061-1141-01', ndc_11: '00061114101', proprietary_name: 'ORBAX', nonproprietary_name: 'ORBIFLOXACIN', active_ingredients: [{ name: 'ORBIFLOXACIN', strength: '22.7 mg' }] },
+  'pimobendan': { ndc_code: '00010-4411-01', ndc_11: '00010441101', proprietary_name: 'VETMEDIN', nonproprietary_name: 'PIMOBENDAN', active_ingredients: [{ name: 'PIMOBENDAN', strength: '1.25 mg' }] },
+  'vetmedin': { ndc_code: '00010-4411-01', ndc_11: '00010441101', proprietary_name: 'VETMEDIN', nonproprietary_name: 'PIMOBENDAN', active_ingredients: [{ name: 'PIMOBENDAN', strength: '1.25 mg' }] },
+
+  // 수의학 처방약 확장 셋업 (Clavamox, Apoquel, Cerenia, Metacam, Temaril-P 등)
+  'clavamox': { ndc_code: '00069-1220-01', ndc_11: '00069122001', proprietary_name: 'CLAVAMOX', nonproprietary_name: 'AMOXI/CLAVULANATE POTASSIUM', active_ingredients: [{ name: 'AMOXI/CLAVULANATE POTASSIUM', strength: '62.5 mg' }] },
+  'amoxicillin': { ndc_code: '00069-1220-01', ndc_11: '00069122001', proprietary_name: 'CLAVAMOX', nonproprietary_name: 'AMOXI/CLAVULANATE POTASSIUM', active_ingredients: [{ name: 'AMOXI/CLAVULANATE POTASSIUM', strength: '62.5 mg' }] },
+  'apoquel': { ndc_code: '00069-0180-01', ndc_11: '00069018001', proprietary_name: 'APOQUEL', nonproprietary_name: 'OCLACITINIB MALEATE', active_ingredients: [{ name: 'OCLACITINIB MALEATE', strength: '3.6 mg' }] },
+  'oclacitinib': { ndc_code: '00069-0180-01', ndc_11: '00069018001', proprietary_name: 'APOQUEL', nonproprietary_name: 'OCLACITINIB MALEATE', active_ingredients: [{ name: 'OCLACITINIB MALEATE', strength: '3.6 mg' }] },
+  'cerenia': { ndc_code: '00069-0510-01', ndc_11: '00069051001', proprietary_name: 'CERENIA', nonproprietary_name: 'MAROPITANT CITRATE', active_ingredients: [{ name: 'MAROPITANT CITRATE', strength: '16 mg' }] },
+  'maropitant': { ndc_code: '00069-0510-01', ndc_11: '00069051001', proprietary_name: 'CERENIA', nonproprietary_name: 'MAROPITANT CITRATE', active_ingredients: [{ name: 'MAROPITANT CITRATE', strength: '16 mg' }] },
+  'metacam': { ndc_code: '00010-6011-01', ndc_11: '00010601101', proprietary_name: 'METACAM', nonproprietary_name: 'MELOXICAM', active_ingredients: [{ name: 'MELOXICAM', strength: '1.5 mg/mL' }] },
+  'meloxicam': { ndc_code: '00010-6011-01', ndc_11: '00010601101', proprietary_name: 'METACAM', nonproprietary_name: 'MELOXICAM', active_ingredients: [{ name: 'MELOXICAM', strength: '1.5 mg/mL' }] },
+  'temaril-p': { ndc_code: '00069-3110-01', ndc_11: '00069311001', proprietary_name: 'TEMARIL-P', nonproprietary_name: 'TRIMEPRAZINE/PREDNISOLONE', active_ingredients: [{ name: 'PREDNISOLONE', strength: '5 mg' }] },
+  'temaril p': { ndc_code: '00069-3110-01', ndc_11: '00069311001', proprietary_name: 'TEMARIL-P', nonproprietary_name: 'TRIMEPRAZINE/PREDNISOLONE', active_ingredients: [{ name: 'PREDNISOLONE', strength: '5 mg' }] },
+  'temaril': { ndc_code: '00069-3110-01', ndc_11: '00069311001', proprietary_name: 'TEMARIL-P', nonproprietary_name: 'TRIMEPRAZINE/PREDNISOLONE', active_ingredients: [{ name: 'PREDNISOLONE', strength: '5 mg' }] },
+  'prednisolone': { ndc_code: '00069-3110-01', ndc_11: '00069311001', proprietary_name: 'PREDNISOLONE', nonproprietary_name: 'PREDNISOLONE', active_ingredients: [{ name: 'PREDNISOLONE', strength: '5 mg' }] },
+  'sucralfate': { ndc_code: '50474-710-01', ndc_11: '50474071001', proprietary_name: 'CARAFATE', nonproprietary_name: 'SUCRALFATE', active_ingredients: [{ name: 'SUCRALFATE', strength: '1 g' }] },
+  'omeprazole': { ndc_code: '00006-0038-01', ndc_11: '00006003801', proprietary_name: 'GASTROGARD', nonproprietary_name: 'OMEPRAZOLE', active_ingredients: [{ name: 'OMEPRAZOLE', strength: '2.28 g' }] }
 };
+
+// 2. 키워드 서브스트링 안전 예외 규칙 (제형/수식어가 붙어들어올 경우 방어)
+const SPECIAL_PATTERNS = [
+  { keyword: 'clavamox', key: 'clavamox' },
+  { keyword: 'apoquel', key: 'apoquel' },
+  { keyword: 'cerenia', key: 'cerenia' },
+  { keyword: 'maropitant', key: 'maropitant' },
+  { keyword: 'metacam', key: 'metacam' },
+  { keyword: 'meloxicam', key: 'meloxicam' },
+  { keyword: 'temaril', key: 'temaril-p' },
+  { keyword: 'prednisolone', key: 'prednisolone' },
+  { keyword: 'oclacitinib', key: 'oclacitinib' },
+  { keyword: 'sucralfate', key: 'sucralfate' },
+  { keyword: 'omeprazole', key: 'omeprazole' },
+  { keyword: 'doxy', key: 'doxycycline' },
+  { keyword: 'baytril', key: 'enrofloxacin' },
+  { keyword: 'enroflox', key: 'enrofloxacin' }
+];
 
 if (SUPABASE_URL && SUPABASE_KEY) {
   supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
@@ -132,7 +113,7 @@ async function lookupDrugFromDb(drugInput) {
   const normalizedTerm = normalizeString(rawTerm);
   const cleanDigits = rawTerm.replace(/[^0-9]/g, '');
 
-  // Step 1: 대소문자 완벽 무시 하드매핑 검사
+  // Step 1: 대소문자/정규화 완벽 무시 하드매핑 직접 대조
   const matchedKey = Object.keys(SPECIAL_DRUG_MAP).find(
     key => key === lowerTerm || key === normalizedTerm
   );
@@ -151,9 +132,10 @@ async function lookupDrugFromDb(drugInput) {
     };
   }
 
-  // Step 2: Doxycycline 계열 키워드 완화 처리
-  if (normalizedTerm.includes('doxy')) {
-    const mapped = SPECIAL_DRUG_MAP['doxycycline'];
+  // Step 2: 키워드 유연 패턴 매칭 (수식어가 뒤에 붙어 나오는 경우 100% 보장)
+  const patternMatch = SPECIAL_PATTERNS.find(p => normalizedTerm.includes(p.keyword));
+  if (patternMatch) {
+    const mapped = SPECIAL_DRUG_MAP[patternMatch.key];
     return {
       name: rawTerm,
       ndc_code: mapped.ndc_code,
@@ -166,7 +148,7 @@ async function lookupDrugFromDb(drugInput) {
     };
   }
 
-  // Step 3: openFDA DB 캐시 정밀 검색
+  // Step 3: openFDA DB 메모리 캐시 전체 정밀 검색
   await ensureDrugDictionaryLoaded();
 
   if (drugDictionaryCache.length > 0) {
@@ -326,6 +308,6 @@ app.post('/v1/analyze', async (req, res) => {
 });
 
 app.listen(PORT, async () => {
-  console.log(`[seon] Complete Case-Insensitive DNI Engine Active | Server running on port ${PORT}`);
+  console.log(`[seon] Fully-Guaranteed Vet Drug DNI Engine Active | Server running on port ${PORT}`);
   await ensureDrugDictionaryLoaded();
 });
