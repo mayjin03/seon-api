@@ -84,7 +84,8 @@ const TYPO_MAP = {
   'enrofloxacine': 'enrofloxacin',
   'clindamycine': 'clindamycin',
   'fenbendazol': 'fenbendazole',
-  'praziquantell': 'praziquantel'
+  'praziquantell': 'praziquantel',
+  'prednisolon': 'prednisolone'
 };
 
 const MASTER_DRUG_RECORDS = {
@@ -93,7 +94,8 @@ const MASTER_DRUG_RECORDS = {
   ciprofloxacin: { ndc_code: '00065-0618-05', ndc_11: '00065061805', proprietary_name: 'CILOXAN', nonproprietary_name: 'CIPROFLOXACIN', active_ingredients: [{ name: 'CIPROFLOXACIN HYDROCHLORIDE', strength: '0.3%' }] },
   gabapentin: { ndc_code: '00071-0801-01', ndc_11: '00071080101', proprietary_name: 'NEURONTIN', nonproprietary_name: 'GABAPENTIN', active_ingredients: [{ name: 'GABAPENTIN', strength: '100 mg' }] },
   carprofen: { ndc_code: '00069-0520-01', ndc_11: '00069052001', proprietary_name: 'RIMADYL', nonproprietary_name: 'CARPROFEN', active_ingredients: [{ name: 'CARPROFEN', strength: '25 mg' }] },
-  furosemide: { ndc_code: '00010-3101-01', ndc_11: '00010310101', proprietary_name: 'SALIX / LASIX', nonproprietary_name: 'FUROSEMIDE', active_ingredients: [{ name: 'FUROSEMIDE', strength: '50 mg' }] }
+  furosemide: { ndc_code: '00010-3101-01', ndc_11: '00010310101', proprietary_name: 'SALIX / LASIX', nonproprietary_name: 'FUROSEMIDE', active_ingredients: [{ name: 'FUROSEMIDE', strength: '50 mg' }] },
+  prednisolone: { ndc_code: '00054-4741-25', ndc_11: '00054474125', proprietary_name: 'PREDNISOLONE', nonproprietary_name: 'PREDNISOLONE', active_ingredients: [{ name: 'PREDNISOLONE', strength: '5 mg' }] }
 };
 
 const ALIAS_GROUP_LIST = [
@@ -102,7 +104,8 @@ const ALIAS_GROUP_LIST = [
   { masterKey: 'ciprofloxacin', aliases: ['ciprofloxacin', 'ciloxan', 'cipro'] },
   { masterKey: 'gabapentin', aliases: ['gabapentin', 'neurontin'] },
   { masterKey: 'carprofen', aliases: ['carprofen', 'rimadyl', 'carprovet'] },
-  { masterKey: 'furosemide', aliases: ['furosemide', 'salix', 'lasix'] }
+  { masterKey: 'furosemide', aliases: ['furosemide', 'salix', 'lasix'] },
+  { masterKey: 'prednisolone', aliases: ['prednisolone', 'prednisolon', 'delta-cortef'] }
 ];
 
 if (SUPABASE_URL && SUPABASE_KEY) {
@@ -183,7 +186,6 @@ async function lookupDrugFromDb(drugInput) {
   return null;
 }
 
-// 상극 평가 (DNI Evaluation) - 유연한 대소문자 & 키워드 매칭 적용
 async function evaluateDniConflictsFromDb(prescriptions, supplements) {
   const conflicts = [];
   if (!supabase) return conflicts;
@@ -230,7 +232,6 @@ async function evaluateDniConflictsFromDb(prescriptions, supplements) {
   return conflicts;
 }
 
-// Supabase cyp450_chelation_rules 기반 간 & 신장 대사 부하 연산
 async function calculateMetabolicStrainIndices(prescriptions, supplements) {
   let hepaticRaw = 0;
   let renalRaw = 0;
@@ -300,7 +301,6 @@ async function calculateMetabolicStrainIndices(prescriptions, supplements) {
   };
 }
 
-// 루트 정적 html 수용
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
@@ -365,7 +365,6 @@ app.post('/v1/analyze', rateLimiter, authenticateApiKey, async (req, res) => {
       recommended_schedule: recommendedSchedule,
       isolation_hours: conflictDetected ? (hasHigh ? 4 : 2) : 0,
       
-      // 간 & 신장 동적 연산 수치
       hepatic_strain_index: strainMetrics.hepatic_strain_index,
       hepatic_status: strainMetrics.hepatic_status,
       renal_strain_index: strainMetrics.renal_strain_index,
