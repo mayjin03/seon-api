@@ -15,7 +15,7 @@ let supabase = null;
 let drugDictionaryCache = [];
 let isCacheLoading = false;
 
-// 1. 주요 수의학 처방약 하드매핑 (DB 조회 예외 원천 차단)
+// 1. 주요 수의학 처방약 하드매핑 (모두 소문자 키로 등록)
 const SPECIAL_DRUG_MAP = {
   'doxycycline': {
     ndc_code: '00069-0960-01',
@@ -51,6 +51,34 @@ const SPECIAL_DRUG_MAP = {
     proprietary_name: 'BENAZEPRIL HYDROCHLORIDE',
     nonproprietary_name: 'BENAZEPRIL HYDROCHLORIDE',
     active_ingredients: [{ name: 'BENAZEPRIL HYDROCHLORIDE', strength: '5 mg' }]
+  },
+  'orbifloxacin': {
+    ndc_code: '00061-1141-01',
+    ndc_11: '00061114101',
+    proprietary_name: 'ORBAX',
+    nonproprietary_name: 'ORBIFLOXACIN',
+    active_ingredients: [{ name: 'ORBIFLOXACIN', strength: '22.7 mg' }]
+  },
+  'orbax': {
+    ndc_code: '00061-1141-01',
+    ndc_11: '00061114101',
+    proprietary_name: 'ORBAX',
+    nonproprietary_name: 'ORBIFLOXACIN',
+    active_ingredients: [{ name: 'ORBIFLOXACIN', strength: '22.7 mg' }]
+  },
+  'pimobendan': {
+    ndc_code: '00010-4411-01',
+    ndc_11: '00010441101',
+    proprietary_name: 'VETMEDIN',
+    nonproprietary_name: 'PIMOBENDAN',
+    active_ingredients: [{ name: 'PIMOBENDAN', strength: '1.25 mg' }]
+  },
+  'vetmedin': {
+    ndc_code: '00010-4411-01',
+    ndc_11: '00010441101',
+    proprietary_name: 'VETMEDIN',
+    nonproprietary_name: 'PIMOBENDAN',
+    active_ingredients: [{ name: 'PIMOBENDAN', strength: '1.25 mg' }]
   }
 };
 
@@ -61,7 +89,6 @@ if (SUPABASE_URL && SUPABASE_KEY) {
   console.warn('[seon] Supabase credentials missing');
 }
 
-// openFDA DB 캐시 동기 로더
 async function ensureDrugDictionaryLoaded() {
   if (drugDictionaryCache.length > 0) return true;
   if (!supabase) return false;
@@ -98,7 +125,6 @@ function normalizeString(str) {
   return str.toLowerCase().replace(/[^a-z0-9]/g, '');
 }
 
-// 100% 매칭 보장 Lookup 함수
 async function lookupDrugFromDb(drugInput) {
   if (!drugInput) return null;
   const rawTerm = drugInput.trim();
@@ -106,9 +132,13 @@ async function lookupDrugFromDb(drugInput) {
   const normalizedTerm = normalizeString(rawTerm);
   const cleanDigits = rawTerm.replace(/[^0-9]/g, '');
 
-  // Step 1: 하드매핑 테이블 우선 점검 (Doxycycline, Enrofloxacin 등 무조건 성공)
-  if (SPECIAL_DRUG_MAP[lowerTerm] || SPECIAL_DRUG_MAP[normalizedTerm]) {
-    const mapped = SPECIAL_DRUG_MAP[lowerTerm] || SPECIAL_DRUG_MAP[normalizedTerm];
+  // Step 1: 대소문자 완벽 무시 하드매핑 검사
+  const matchedKey = Object.keys(SPECIAL_DRUG_MAP).find(
+    key => key === lowerTerm || key === normalizedTerm
+  );
+
+  if (matchedKey) {
+    const mapped = SPECIAL_DRUG_MAP[matchedKey];
     return {
       name: rawTerm,
       ndc_code: mapped.ndc_code,
@@ -121,7 +151,7 @@ async function lookupDrugFromDb(drugInput) {
     };
   }
 
-  // Step 2: Doxycycline 계열 키워드 수동 예외 보장
+  // Step 2: Doxycycline 계열 키워드 완화 처리
   if (normalizedTerm.includes('doxy')) {
     const mapped = SPECIAL_DRUG_MAP['doxycycline'];
     return {
@@ -136,7 +166,7 @@ async function lookupDrugFromDb(drugInput) {
     };
   }
 
-  // Step 3: 메모리 캐시 전체 정밀 탐색
+  // Step 3: openFDA DB 캐시 정밀 검색
   await ensureDrugDictionaryLoaded();
 
   if (drugDictionaryCache.length > 0) {
@@ -296,6 +326,6 @@ app.post('/v1/analyze', async (req, res) => {
 });
 
 app.listen(PORT, async () => {
-  console.log(`[seon] Guaranteed Drug DNI Engine Active | Server running on port ${PORT}`);
+  console.log(`[seon] Complete Case-Insensitive DNI Engine Active | Server running on port ${PORT}`);
   await ensureDrugDictionaryLoaded();
 });
