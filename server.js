@@ -19,32 +19,34 @@ if (SUPABASE_URL && SUPABASE_KEY) {
   console.warn('[seon] Supabase credentials missing');
 }
 
-// Supabase DB 실시간 약물 조회
+// Supabase DB 실시간 약물 조회 (상표명 + 성분명 + JSONB active_ingredients 통합 탐색)
 async function lookupDrugFromDb(drugInput) {
   if (!drugInput || !supabase) return null;
   const searchTerm = drugInput.trim();
   const cleanDigits = searchTerm.replace(/[^0-9]/g, '');
 
   try {
+    // 1차: proprietary_name, nonproprietary_name, ndc_code, aliases, active_ingredients(JSONB) 통합 검색
     const { data: dbMatches, error } = await supabase
       .from('fda_ndc_vet_dictionary')
       .select('*')
-      .or(`proprietary_name.ilike.%${searchTerm}%,nonproprietary_name.ilike.%${searchTerm}%,ndc_code.ilike.%${searchTerm}%,aliases.cs.{"${searchTerm.toLowerCase()}"}`);
+      .or(`proprietary_name.ilike.%${searchTerm}%,nonproprietary_name.ilike.%${searchTerm}%,ndc_code.ilike.%${searchTerm}%,aliases.cs.{"${searchTerm.toLowerCase()}"},active_ingredients::text.ilike.%${searchTerm}%`);
 
     if (!error && dbMatches && dbMatches.length > 0) {
       const matched = dbMatches[0];
       return {
-        name: matched.proprietary_name || matched.nonproprietary_name,
+        name: matched.proprietary_name || matched.nonproprietary_name || searchTerm,
         ndc_code: matched.ndc_code,
         ndc_11: matched.ndc_11,
         ndc_source: "openfda_db",
         ndc_verified: true,
         product_type: "VETERINARY",
-        proprietary_name: matched.proprietary_name || matched.nonproprietary_name,
-        active_ingredients: matched.active_ingredients || []
+        proprietary_name: matched.proprietary_name || matched.nonproprietary_name || searchTerm,
+        active_ingredients: matched.active_ingredients || [{ name: searchTerm, strength: '' }]
       };
     }
 
+    // 2차: NDC 숫자만 추출한 11자리 부분 검색
     if (cleanDigits.length >= 8) {
       const { data: ndcMatches } = await supabase
         .from('fda_ndc_vet_dictionary')
@@ -54,14 +56,14 @@ async function lookupDrugFromDb(drugInput) {
       if (ndcMatches && ndcMatches.length > 0) {
         const matched = ndcMatches[0];
         return {
-          name: matched.proprietary_name || matched.nonproprietary_name,
+          name: matched.proprietary_name || matched.nonproprietary_name || searchTerm,
           ndc_code: matched.ndc_code,
           ndc_11: matched.ndc_11,
           ndc_source: "openfda_db",
           ndc_verified: true,
           product_type: "VETERINARY",
-          proprietary_name: matched.proprietary_name || matched.nonproprietary_name,
-          active_ingredients: matched.active_ingredients || []
+          proprietary_name: matched.proprietary_name || matched.nonproprietary_name || searchTerm,
+          active_ingredients: matched.active_ingredients || [{ name: searchTerm, strength: '' }]
         };
       }
     }
@@ -72,13 +74,12 @@ async function lookupDrugFromDb(drugInput) {
   return null;
 }
 
-// Supabase dni_rules 테이블 기반 실시간 DNI 검사 엔진
+// DB 기반 DNI 검사 엔진
 async function evaluateDniConflictsFromDb(prescriptions, supplements) {
   const conflicts = [];
   if (!supabase) return conflicts;
 
   try {
-    // 1. Supabase에서 전체 DNI 규칙 불러오기
     const { data: rules, error } = await supabase.from('dni_rules').select('*');
     if (error || !rules) return conflicts;
 
@@ -153,7 +154,6 @@ app.post('/v1/analyze', async (req, res) => {
       })
     );
 
-    // DB 기반 DNI 상호작용 분석 수행
     const conflicts = await evaluateDniConflictsFromDb(analyzedPrescriptions, supplements);
     const conflictDetected = conflicts.length > 0;
 
