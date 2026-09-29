@@ -15,7 +15,7 @@ let supabase = null;
 let drugDictionaryCache = [];
 let isCacheLoading = false;
 
-// 자주 발생하는 오타 교정 테이블
+// 스펠링 오타 정밀 교정 테이블 (단어 완전 일치 기준)
 const TYPO_MAP = {
   'doxycyclin': 'doxycycline',
   'docycycline': 'doxycycline',
@@ -25,10 +25,12 @@ const TYPO_MAP = {
   'praziquantell': 'praziquantel'
 };
 
-// 1. 수의학 처방약 정식 마스터 레코드 (실제 openFDA 정식 NDC 등록)
+// 1. 핵심 처방약 마스터 레코드 (교차 오염 완전 차단)
 const MASTER_DRUG_RECORDS = {
   doxycycline: { ndc_code: '00069-0960-01', ndc_11: '00069096001', proprietary_name: 'VIBRAMYCIN', nonproprietary_name: 'DOXYCYCLINE MONOHYDRATE', active_ingredients: [{ name: 'DOXYCYCLINE MONOHYDRATE', strength: '100 mg' }] },
   enrofloxacin: { ndc_code: '81471-693-00', ndc_11: '81471069300', proprietary_name: 'BAYTRIL', nonproprietary_name: 'ENROFLOXACIN', active_ingredients: [{ name: 'ENROFLOXACIN', strength: '22.7 mg' }] },
+  ciprofloxacin: { ndc_code: '00065-0618-05', ndc_11: '00065061805', proprietary_name: 'CILOXAN', nonproprietary_name: 'CIPROFLOXACIN', active_ingredients: [{ name: 'CIPROFLOXACIN HYDROCHLORIDE', strength: '0.3%' }] },
+  ofloxacin: { ndc_code: '00023-9188-05', ndc_11: '00023918805', proprietary_name: 'OCUFLOX', nonproprietary_name: 'OFLOXACIN', active_ingredients: [{ name: 'OFLOXACIN', strength: '0.3%' }] },
   labetalol: { ndc_code: '06158-513-00', ndc_11: '06158051300', proprietary_name: 'LABETALOL HYDROCHLORIDE', nonproprietary_name: 'LABETALOL HYDROCHLORIDE', active_ingredients: [{ name: 'LABETALOL HYDROCHLORIDE', strength: '100 mg' }] },
   benazepril: { ndc_code: '50090-428-04', ndc_11: '50090042804', proprietary_name: 'BENAZEPRIL HYDROCHLORIDE', nonproprietary_name: 'BENAZEPRIL HYDROCHLORIDE', active_ingredients: [{ name: 'BENAZEPRIL HYDROCHLORIDE', strength: '5 mg' }] },
   orbifloxacin: { ndc_code: '00061-1141-01', ndc_11: '00061114101', proprietary_name: 'ORBAX', nonproprietary_name: 'ORBIFLOXACIN', active_ingredients: [{ name: 'ORBIFLOXACIN', strength: '22.7 mg' }] },
@@ -59,7 +61,6 @@ const MASTER_DRUG_RECORDS = {
   metronidazole: { ndc_code: '00058-0410-01', ndc_11: '00058041001', proprietary_name: 'FLAGYL', nonproprietary_name: 'METRONIDAZOLE', active_ingredients: [{ name: 'METRONIDAZOLE', strength: '250 mg' }] },
   tylosin: { ndc_code: '00098-0511-01', ndc_11: '00098051101', proprietary_name: 'TYLAN', nonproprietary_name: 'TYLOSIN TARTRATE', active_ingredients: [{ name: 'TYLOSIN TARTRATE', strength: '100 g' }] },
   tobrex: { ndc_code: '00065-0644-05', ndc_11: '00065064405', proprietary_name: 'TOBREX', nonproprietary_name: 'TOBRAMYCIN', active_ingredients: [{ name: 'TOBRAMYCIN', strength: '0.3%' }] },
-  ocuflox: { ndc_code: '00023-9188-05', ndc_11: '00023918805', proprietary_name: 'OCUFLOX', nonproprietary_name: 'OFLOXACIN', active_ingredients: [{ name: 'OFLOXACIN', strength: '0.3%' }] },
   nizoral: { ndc_code: '50458-223-06', ndc_11: '50458022306', proprietary_name: 'NIZORAL', nonproprietary_name: 'KETOCONAZOLE', active_ingredients: [{ name: 'KETOCONAZOLE', strength: '200 mg' }] },
   itraconazole: { ndc_code: '50474-702-01', ndc_11: '50474070201', proprietary_name: 'SPORANOX', nonproprietary_name: 'ITRACONAZOLE', active_ingredients: [{ name: 'ITRACONAZOLE', strength: '100 mg' }] },
   cefpodoxime: { ndc_code: '00010-4401-01', ndc_11: '00010440101', proprietary_name: 'SIMPLICEF', nonproprietary_name: 'CEFPODOXIME PROXETIL', active_ingredients: [{ name: 'CEFPODOXIME PROXETIL', strength: '100 mg' }] },
@@ -72,18 +73,18 @@ const MASTER_DRUG_RECORDS = {
   fenbendazole: { ndc_code: '00061-0251-01', ndc_11: '00061025101', proprietary_name: 'PANACUR', nonproprietary_name: 'FENBENDAZOLE', active_ingredients: [{ name: 'FENBENDAZOLE', strength: '222 mg/g' }] },
   clindamycin: { ndc_code: '50474-512-01', ndc_11: '50474051201', proprietary_name: 'ANTIROBE', nonproprietary_name: 'CLINDAMYCIN HYDROCHLORIDE', active_ingredients: [{ name: 'CLINDAMYCIN HYDROCHLORIDE', strength: '25 mg' }] },
   praziquantel: { ndc_code: '00010-4320-01', ndc_11: '00010432001', proprietary_name: 'DRONCIT', nonproprietary_name: 'PRAZIQUANTEL', active_ingredients: [{ name: 'PRAZIQUANTEL', strength: '34 mg' }] },
-  
-  // Theophylline 및 추가 정식 약물 등록
   theophylline: { ndc_code: '00025-0721-01', ndc_11: '00025072101', proprietary_name: 'THEO-24', nonproprietary_name: 'THEOPHYLLINE', active_ingredients: [{ name: 'THEOPHYLLINE', strength: '100 mg' }] },
   atropine: { ndc_code: '00065-0080-05', ndc_11: '00065008005', proprietary_name: 'ISOPTO ATROPINE', nonproprietary_name: 'ATROPINE SULFATE', active_ingredients: [{ name: 'ATROPINE SULFATE', strength: '1%' }] },
   prednisone: { ndc_code: '00054-4728-25', ndc_11: '00054472825', proprietary_name: 'DELTASONE', nonproprietary_name: 'PREDNISONE', active_ingredients: [{ name: 'PREDNISOLONE', strength: '5 mg' }] },
   ivermectin: { ndc_code: '00010-4181-01', ndc_11: '00010418101', proprietary_name: 'HEARTGARD', nonproprietary_name: 'IVERMECTIN', active_ingredients: [{ name: 'IVERMECTIN', strength: '68 mcg' }] }
 };
 
-// 2. 대소문자/오타 방어 동의어 그룹
+// 2. 동의어 그룹 (독립 단어 일치만 적용)
 const ALIAS_GROUP_LIST = [
   { masterKey: 'doxycycline', aliases: ['doxycycline', 'doxycyclin', 'vibramycin', 'doxy'] },
   { masterKey: 'enrofloxacin', aliases: ['enrofloxacin', 'enrofloxacine', 'baytril', 'enroflox'] },
+  { masterKey: 'ciprofloxacin', aliases: ['ciprofloxacin', 'ciloxan', 'cipro'] },
+  { masterKey: 'ofloxacin', aliases: ['ofloxacin', 'ocuflox'] },
   { masterKey: 'labetalol', aliases: ['labetalol'] },
   { masterKey: 'benazepril', aliases: ['benazepril', 'lotensin'] },
   { masterKey: 'orbifloxacin', aliases: ['orbifloxacin', 'orbax'] },
@@ -106,15 +107,14 @@ const ALIAS_GROUP_LIST = [
   { masterKey: 'sucralfate', aliases: ['sucralfate', 'carafate'] },
   { masterKey: 'omeprazole', aliases: ['omeprazole', 'gastrogard'] },
   { masterKey: 'tramadol', aliases: ['tramadol', 'ultram'] },
-  { masterKey: 'adequan', aliases: ['adequan', 'polysulfatedglycosaminoglycan', 'polysulfated glycosaminoglycan', 'psgag'] },
-  { masterKey: 'interceptor', aliases: ['interceptor', 'milbemycin', 'milbemycinoxime', 'milbemycin oxime'] },
+  { masterKey: 'adequan', aliases: ['adequan', 'polysulfatedglycosaminoglycan', 'psgag'] },
+  { masterKey: 'interceptor', aliases: ['interceptor', 'milbemycin', 'milbemycinoxime'] },
   { masterKey: 'bravecto', aliases: ['bravecto', 'fluralaner'] },
   { masterKey: 'nexgard', aliases: ['nexgard', 'afoxolaner'] },
   { masterKey: 'simparica', aliases: ['simparica', 'sarolaner'] },
   { masterKey: 'metronidazole', aliases: ['metronidazole', 'flagyl'] },
-  { masterKey: 'tylosin', aliases: ['tylosin', 'tylan', 'tylosintartrate', 'tylosin tartrate'] },
+  { masterKey: 'tylosin', aliases: ['tylosin', 'tylan', 'tylosintartrate'] },
   { masterKey: 'tobrex', aliases: ['tobrex', 'tobramycin'] },
-  { masterKey: 'ocuflox', aliases: ['ocuflox', 'ofloxacin'] },
   { masterKey: 'nizoral', aliases: ['nizoral', 'ketoconazole'] },
   { masterKey: 'itraconazole', aliases: ['itraconazole', 'sporanox'] },
   { masterKey: 'cefpodoxime', aliases: ['cefpodoxime', 'simplicef', 'cefpodoximeproxetil'] },
@@ -176,12 +176,12 @@ function normalizeString(str) {
   return str.toLowerCase().replace(/[^a-z0-9]/g, '');
 }
 
+// 엄격 토큰 정밀 Lookup 엔진 (크로스 오염 100% 방지)
 async function lookupDrugFromDb(drugInput) {
   if (!drugInput) return null;
   let rawTerm = drugInput.trim();
   const cleanInput = rawTerm.toLowerCase();
 
-  // 오타 자동 교정
   if (TYPO_MAP[cleanInput]) {
     rawTerm = TYPO_MAP[cleanInput];
   }
@@ -192,11 +192,11 @@ async function lookupDrugFromDb(drugInput) {
 
   if (normalizedTerm.length < 3) return null;
 
-  // Step 1: 마스터 레코드 & 동의어 그룹 직접 매칭 (가장 높은 신뢰도)
+  // Step 1: 완전 일치 및 단어 토큰 일치 매칭 (Partial Substring 절대 금지)
   const matchedGroup = ALIAS_GROUP_LIST.find(group => 
     group.aliases.some(alias => {
       const normAlias = normalizeString(alias);
-      return normalizedTerm === normAlias || normalizedTerm.includes(normAlias) || normAlias.includes(normalizedTerm);
+      return normalizedTerm === normAlias;
     })
   );
 
@@ -216,7 +216,7 @@ async function lookupDrugFromDb(drugInput) {
     }
   }
 
-  // Step 2: Supabase DB 캐시 유연 탐색 (실제 존재하는 openFDA 정식 NDC 반환)
+  // Step 2: openFDA DB 캐시 정밀 토큰 검색
   await ensureDrugDictionaryLoaded();
 
   if (drugDictionaryCache.length > 0) {
@@ -227,18 +227,19 @@ async function lookupDrugFromDb(drugInput) {
       const ndc11 = (d.ndc_11 || '').toLowerCase();
       const ingredients = d.active_ingredients || [];
 
-      if ((propNorm.length >= 3 && propNorm.includes(normalizedTerm)) || 
-          (nonPropNorm.length >= 3 && nonPropNorm.includes(normalizedTerm)) || 
-          ndc.includes(lowerTerm)) {
+      // 브랜드명 및 일반명 완전 동일 여부 확인
+      if (propNorm === normalizedTerm || nonPropNorm === normalizedTerm || ndc === lowerTerm) {
         return true;
       }
-      if (cleanDigits.length >= 8 && ndc11.includes(cleanDigits)) {
+      if (cleanDigits.length >= 8 && ndc11 === cleanDigits) {
         return true;
       }
 
+      // 성분명 토큰 단위 정밀 검사 (Ciprofloxacin이 Ofloxacin에 걸리지 않도록 방어)
       return ingredients.some(ing => {
-        const ingNorm = normalizeString(ing.name || '');
-        return ingNorm.length >= 3 && (ingNorm.includes(normalizedTerm) || normalizedTerm.includes(ingNorm));
+        const rawIngName = (ing.name || '').toLowerCase();
+        const ingTokens = rawIngName.split(/\s+/).map(t => normalizeString(t));
+        return ingTokens.includes(normalizedTerm);
       });
     });
 
@@ -256,7 +257,6 @@ async function lookupDrugFromDb(drugInput) {
     }
   }
 
-  // DB에 아예 존재하지 않는 가짜 약물은 허구의 NDC 코드를 생성하지 않고 안전하게 manual(false) 처리
   return null;
 }
 
@@ -313,10 +313,10 @@ async function evaluateDniConflictsFromDb(prescriptions, supplements) {
   return conflicts;
 }
 
-app.get('/health', async (req, res) => {
+app.get('/health', async (ensureDrugDictionaryLoaded => async (req, res) => {
   await ensureDrugDictionaryLoaded();
   res.json({ status: 'ok', cached_drugs: drugDictionaryCache.length, timestamp: new Date().toISOString() });
-});
+}));
 
 app.post('/v1/analyze', async (req, res) => {
   try {
@@ -379,6 +379,6 @@ app.post('/v1/analyze', async (req, res) => {
 });
 
 app.listen(PORT, async () => {
-  console.log(`[seon] Verified True-NDC Engine Active | Server running on port ${PORT}`);
+  console.log(`[seon] Strict Token Isolation Engine Active | Server running on port ${PORT}`);
   await ensureDrugDictionaryLoaded();
 });
