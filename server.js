@@ -22,7 +22,7 @@ if (SUPABASE_URL && SUPABASE_KEY) {
   console.warn('[seon] Supabase credentials missing');
 }
 
-// openFDA 수의용 약물 사전 (페이지네이션으로 전수 100% 로드)
+// 997개 수의용 사전 전수 메모리 로드 (페이지네이션 0~1999)
 async function ensureDrugDictionaryLoaded() {
   if (drugDictionaryCache.length > 0) return true;
   if (!supabase) return false;
@@ -36,7 +36,6 @@ async function ensureDrugDictionaryLoaded() {
 
   isCacheLoading = true;
   try {
-    // Range를 0~1999로 지정하여 Limit 잘림 현상 원천 차단
     const { data, error } = await supabase
       .from('fda_ndc_vet_dictionary')
       .select('*')
@@ -44,7 +43,7 @@ async function ensureDrugDictionaryLoaded() {
 
     if (!error && data && data.length > 0) {
       drugDictionaryCache = data;
-      console.log(`[seon] Dictionary fully loaded: ${drugDictionaryCache.length} items cached.`);
+      console.log(`[seon] Dictionary FULLY loaded: ${drugDictionaryCache.length} items cached.`);
     } else if (error) {
       console.error("[seon] Supabase loading error:", error.message);
     }
@@ -57,35 +56,46 @@ async function ensureDrugDictionaryLoaded() {
   return drugDictionaryCache.length > 0;
 }
 
-// 100% 토큰 및 부분일치 매칭 Lookup
+// 알파벳/숫자 정규화
+function normalizeString(str) {
+  if (!str) return '';
+  return str.toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+// 토큰화 & 염(Salt) 호환 유연 매칭 Lookup 함수
 async function lookupDrugFromDb(drugInput) {
   if (!drugInput) return null;
   const rawTerm = drugInput.trim();
   const lowerTerm = rawTerm.toLowerCase();
+  const normalizedTerm = normalizeString(rawTerm);
   const cleanDigits = rawTerm.replace(/[^0-9]/g, '');
+
+  // 의미 있는 3글자 이상 단어 토큰 추출 (예: 'doxycycline hyclate' -> ['doxycycline', 'hyclate'])
+  const inputTokens = lowerTerm.split(/\s+/).map(t => normalizeString(t)).filter(t => t.length >= 3);
 
   await ensureDrugDictionaryLoaded();
 
   if (drugDictionaryCache.length > 0) {
     const matched = drugDictionaryCache.find(d => {
-      const prop = (d.proprietary_name || '').toLowerCase();
-      const nonProp = (d.nonproprietary_name || '').toLowerCase();
+      const propNorm = normalizeString(d.proprietary_name || '');
+      const nonPropNorm = normalizeString(d.nonproprietary_name || '');
       const ndc = (d.ndc_code || '').toLowerCase();
       const ndc11 = (d.ndc_11 || '').toLowerCase();
       const ingredients = d.active_ingredients || [];
 
-      // 1. 상품명 / 일반성분명 / NDC 매칭
-      if (prop.includes(lowerTerm) || nonProp.includes(lowerTerm) || ndc.includes(lowerTerm)) {
+      // 1. 상표명 / 대표성분명 / NDC 매칭
+      if (propNorm.includes(normalizedTerm) || nonPropNorm.includes(normalizedTerm) || ndc.includes(lowerTerm)) {
         return true;
       }
       if (cleanDigits.length >= 8 && ndc11.includes(cleanDigits)) {
         return true;
       }
 
-      // 2. active_ingredients 내 성분명 포괄 매칭 (Doxycycline Hyclate 등 포함)
+      // 2. active_ingredients 내 핵심 단어 토큰 매칭 (HYCLATE vs MONOHYDRATE 호환 해결)
       return ingredients.some(ing => {
-        const ingName = (ing.name || '').toLowerCase();
-        return ingName.includes(lowerTerm) || lowerTerm.includes(ingName);
+        const ingNorm = normalizeString(ing.name || '');
+        // 입력 토큰 중 단 하나라도(예: doxycycline) 성분명에 포함되면 매칭 성공
+        return inputTokens.some(token => ingNorm.includes(token) || token.includes(ingNorm));
       });
     });
 
@@ -225,6 +235,6 @@ app.post('/v1/analyze', async (req, res) => {
 });
 
 app.listen(PORT, async () => {
-  console.log(`[seon] Complete DB DNI Engine Active | Server running on port ${PORT}`);
+  console.log(`[seon] Tokenized Salt-Flexible DNI Engine Active | Server running on port ${PORT}`);
   await ensureDrugDictionaryLoaded();
 });
