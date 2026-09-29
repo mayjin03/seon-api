@@ -13,6 +13,7 @@ const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABA
 
 let supabase = null;
 let drugDictionaryCache = [];
+let isCacheLoading = false;
 
 if (SUPABASE_URL && SUPABASE_KEY) {
   supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
@@ -21,29 +22,41 @@ if (SUPABASE_URL && SUPABASE_KEY) {
   console.warn('[seon] Supabase credentials missing');
 }
 
-// 997개 수의용 약물 데이터 안정적 메모리 로드
+// openFDA 997개 수의용 약물 사전 메모리 완벽 적재 함수
 async function ensureDrugDictionaryLoaded() {
   if (drugDictionaryCache.length > 0) return true;
   if (!supabase) return false;
 
+  if (isCacheLoading) {
+    while (isCacheLoading) {
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    return drugDictionaryCache.length > 0;
+  }
+
+  isCacheLoading = true;
   try {
     const { data, error } = await supabase
       .from('fda_ndc_vet_dictionary')
       .select('*')
-      .limit(2000);
+      .range(0, 1999);
 
     if (!error && data && data.length > 0) {
       drugDictionaryCache = data;
-      console.log(`[seon] Successfully loaded ${drugDictionaryCache.length} drugs into memory.`);
-      return true;
+      console.log(`[seon] Dictionary FULLY loaded into memory: ${drugDictionaryCache.length} items ready.`);
+    } else if (error) {
+      console.error("[seon] Supabase load error:", error.message);
     }
   } catch (err) {
     console.error("[seon] Exception loading drug dictionary:", err.message);
+  } finally {
+    isCacheLoading = false;
   }
-  return false;
+
+  return drugDictionaryCache.length > 0;
 }
 
-// 토큰화 & 다단계 우선순위 기반 100% 매칭 Lookup 함수
+// 토큰화 & 다단계 매칭 기반 100% DB Lookup 함수
 async function lookupDrugFromDb(drugInput) {
   if (!drugInput) return null;
   const rawTerm = drugInput.trim();
@@ -53,39 +66,27 @@ async function lookupDrugFromDb(drugInput) {
   await ensureDrugDictionaryLoaded();
 
   if (drugDictionaryCache.length > 0) {
-    // 1단계: 정확한 단어 포함 매칭 (상품명 또는 일반성분명)
-    let matched = drugDictionaryCache.find(d => {
+    const matched = drugDictionaryCache.find(d => {
       const prop = (d.proprietary_name || '').toLowerCase();
       const nonProp = (d.nonproprietary_name || '').toLowerCase();
-      return prop === lowerTerm || nonProp === lowerTerm || prop.startsWith(lowerTerm) || nonProp.startsWith(lowerTerm);
+      const ndc = (d.ndc_code || '').toLowerCase();
+      const ndc11 = (d.ndc_11 || '').toLowerCase();
+      const ingredients = d.active_ingredients || [];
+
+      // 1. 상표명 / 성분명 / NDC 코드 부분일치
+      if (prop.includes(lowerTerm) || nonProp.includes(lowerTerm) || ndc.includes(lowerTerm)) {
+        return true;
+      }
+      if (cleanDigits.length >= 8 && ndc11.includes(cleanDigits)) {
+        return true;
+      }
+
+      // 2. active_ingredients 내 성분명 매칭 (Doxycycline, Enrofloxacin, Labetalol 등 염 포함)
+      return ingredients.some(ing => {
+        const ingName = (ing.name || '').toLowerCase();
+        return ingName.includes(lowerTerm) || lowerTerm.includes(ingName);
+      });
     });
-
-    // 2단계: active_ingredients 내 성분명 일치 매칭
-    if (!matched) {
-      matched = drugDictionaryCache.find(d => {
-        const ingredients = d.active_ingredients || [];
-        return ingredients.some(ing => {
-          const ingName = (ing.name || '').toLowerCase();
-          return ingName.includes(lowerTerm) || lowerTerm.includes(ingName);
-        });
-      });
-    }
-
-    // 3단계: 전체 텍스트 포괄 검색
-    if (!matched) {
-      matched = drugDictionaryCache.find(d => {
-        const fullText = JSON.stringify(d).toLowerCase();
-        return fullText.includes(lowerTerm);
-      });
-    }
-
-    // 4단계: NDC 숫자 코드 매칭
-    if (!matched && cleanDigits.length >= 8) {
-      matched = drugDictionaryCache.find(d => {
-        const ndc11 = (d.ndc_11 || '').replace(/[^0-9]/g, '');
-        return ndc11.includes(cleanDigits);
-      });
-    }
 
     if (matched) {
       return {
