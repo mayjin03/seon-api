@@ -19,32 +19,32 @@ if (SUPABASE_URL && SUPABASE_KEY) {
   console.warn('[seon] Supabase credentials missing');
 }
 
-// Supabase DB 실시간 약물 조회 (PostgREST 안전 쿼리)
+// Supabase DB 실시간 약물 조회 (PostgREST 다중 패턴 완벽 매칭)
 async function lookupDrugFromDb(drugInput) {
   if (!drugInput || !supabase) return null;
   const searchTerm = drugInput.trim();
   const cleanDigits = searchTerm.replace(/[^0-9]/g, '');
 
   try {
-    // 1차: proprietary_name, nonproprietary_name, ndc_code 우선 검색
+    // 1차: nonproprietary_name 또는 proprietary_name 부분 일치
     let { data: dbMatches, error } = await supabase
       .from('fda_ndc_vet_dictionary')
       .select('*')
-      .or(`proprietary_name.ilike.%${searchTerm}%,nonproprietary_name.ilike.%${searchTerm}%,ndc_code.ilike.%${searchTerm}%`);
+      .or(`nonproprietary_name.ilike.%${searchTerm}%,proprietary_name.ilike.%${searchTerm}%,ndc_code.ilike.%${searchTerm}%`);
 
-    // 2차: 1차 결과가 없을 경우 active_ingredients JSONB 텍스트 검색
+    // 2차: 1차 결과 실패 시, active_ingredients textSearch 또는 ilike
     if ((!dbMatches || dbMatches.length === 0) && !error) {
-      const { data: jsonMatches } = await supabase
+      const { data: ingMatches } = await supabase
         .from('fda_ndc_vet_dictionary')
         .select('*')
-        .textSearch('active_ingredients', searchTerm, { type: 'plain', config: 'english' });
+        .ilike('active_ingredients::text', `%${searchTerm}%`);
 
-      if (jsonMatches && jsonMatches.length > 0) {
-        dbMatches = jsonMatches;
+      if (ingMatches && ingMatches.length > 0) {
+        dbMatches = ingMatches;
       }
     }
 
-    // 3차: 1~2차 결과가 없으면 NDC 숫자만 추출하여 ndc_11 검색
+    // 3차: NDC 숫자 부분 검색
     if ((!dbMatches || dbMatches.length === 0) && cleanDigits.length >= 8) {
       const { data: ndcMatches } = await supabase
         .from('fda_ndc_vet_dictionary')
