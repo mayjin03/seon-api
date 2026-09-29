@@ -15,13 +15,12 @@ let supabase = null;
 let drugDictionaryCache = [];
 let isCacheLoading = false;
 
-// 0. B2B API Key 인증 및 요청 수 제한(Rate Limiter) 설정
+// B2B API Key 인증 및 요청 수 제한(Rate Limiter) 설정
 const VALID_API_KEYS = new Set([
   process.env.SEON_DEMO_API_KEY || 'seon_demo_pk_12345',
   process.env.SEON_LIVE_API_KEY || 'seon_live_pk_67890'
 ]);
 
-// 메모리 기반 Rate Limiter (분당 최대 60회)
 const rateLimitMap = new Map();
 const RATE_LIMIT_WINDOW_MS = 60 * 1000;
 const MAX_REQUESTS_PER_WINDOW = 60;
@@ -54,27 +53,21 @@ const rateLimiter = (req, res, next) => {
   next();
 };
 
-// API Key 인증 미들웨어
 const authenticateApiKey = (req, res, next) => {
   const apiKey = req.headers['x-api-key'];
-
-  // 샌드박스 및 데모용 패스스루 허용 (x-api-key 미전송 시 기본 데모 키로 간주 처리)
   if (!apiKey) {
     req.headers['x-api-key'] = 'seon_demo_pk_12345';
     return next();
   }
-
   if (!VALID_API_KEYS.has(apiKey)) {
     return res.status(401).json({
       status: 'UNAUTHORIZED',
       message: '401 Unauthorized: 유효하지 않은 x-api-key 입니다.'
     });
   }
-
   next();
 };
 
-// 스펠링 오타 정밀 교정 테이블 (단어 완전 일치 기준)
 const TYPO_MAP = {
   'doxycyclin': 'doxycycline',
   'docycycline': 'doxycycline',
@@ -84,112 +77,22 @@ const TYPO_MAP = {
   'praziquantell': 'praziquantel'
 };
 
-// 1. 핵심 처방약 마스터 레코드 (교차 오염 완전 차단)
 const MASTER_DRUG_RECORDS = {
   doxycycline: { ndc_code: '00069-0960-01', ndc_11: '00069096001', proprietary_name: 'VIBRAMYCIN', nonproprietary_name: 'DOXYCYCLINE MONOHYDRATE', active_ingredients: [{ name: 'DOXYCYCLINE MONOHYDRATE', strength: '100 mg' }] },
   enrofloxacin: { ndc_code: '81471-693-00', ndc_11: '81471069300', proprietary_name: 'BAYTRIL', nonproprietary_name: 'ENROFLOXACIN', active_ingredients: [{ name: 'ENROFLOXACIN', strength: '22.7 mg' }] },
   ciprofloxacin: { ndc_code: '00065-0618-05', ndc_11: '00065061805', proprietary_name: 'CILOXAN', nonproprietary_name: 'CIPROFLOXACIN', active_ingredients: [{ name: 'CIPROFLOXACIN HYDROCHLORIDE', strength: '0.3%' }] },
-  ofloxacin: { ndc_code: '00023-9188-05', ndc_11: '00023918805', proprietary_name: 'OCUFLOX', nonproprietary_name: 'OFLOXACIN', active_ingredients: [{ name: 'OFLOXACIN', strength: '0.3%' }] },
-  labetalol: { ndc_code: '06158-513-00', ndc_11: '06158051300', proprietary_name: 'LABETALOL HYDROCHLORIDE', nonproprietary_name: 'LABETALOL HYDROCHLORIDE', active_ingredients: [{ name: 'LABETALOL HYDROCHLORIDE', strength: '100 mg' }] },
-  benazepril: { ndc_code: '50090-428-04', ndc_11: '50090042804', proprietary_name: 'BENAZEPRIL HYDROCHLORIDE', nonproprietary_name: 'BENAZEPRIL HYDROCHLORIDE', active_ingredients: [{ name: 'BENAZEPRIL HYDROCHLORIDE', strength: '5 mg' }] },
-  orbifloxacin: { ndc_code: '00061-1141-01', ndc_11: '00061114101', proprietary_name: 'ORBAX', nonproprietary_name: 'ORBIFLOXACIN', active_ingredients: [{ name: 'ORBIFLOXACIN', strength: '22.7 mg' }] },
-  pimobendan: { ndc_code: '00010-4411-01', ndc_11: '00010441101', proprietary_name: 'VETMEDIN', nonproprietary_name: 'PIMOBENDAN', active_ingredients: [{ name: 'PIMOBENDAN', strength: '1.25 mg' }] },
-  clavamox: { ndc_code: '00069-1220-01', ndc_11: '00069122001', proprietary_name: 'CLAVAMOX', nonproprietary_name: 'AMOXI/CLAVULANATE POTASSIUM', active_ingredients: [{ name: 'AMOXI/CLAVULANATE POTASSIUM', strength: '62.5 mg' }] },
-  apoquel: { ndc_code: '00069-0180-01', ndc_11: '00069018001', proprietary_name: 'APOQUEL', nonproprietary_name: 'OCLACITINIB MALEATE', active_ingredients: [{ name: 'OCLACITINIB MALEATE', strength: '3.6 mg' }] },
-  cerenia: { ndc_code: '00069-0510-01', ndc_11: '00069051001', proprietary_name: 'CERENIA', nonproprietary_name: 'MAROPITANT CITRATE', active_ingredients: [{ name: 'MAROPITANT CITRATE', strength: '16 mg' }] },
-  metacam: { ndc_code: '00010-6011-01', ndc_11: '00010601101', proprietary_name: 'METACAM', nonproprietary_name: 'MELOXICAM', active_ingredients: [{ name: 'MELOXICAM', strength: '1.5 mg/mL' }] },
-  temaril: { ndc_code: '00069-3110-01', ndc_11: '00069311001', proprietary_name: 'TEMARIL-P', nonproprietary_name: 'TRIMEPRAZINE/PREDNISOLONE', active_ingredients: [{ name: 'PREDNISOLONE', strength: '5 mg' }] },
   gabapentin: { ndc_code: '00071-0801-01', ndc_11: '00071080101', proprietary_name: 'NEURONTIN', nonproprietary_name: 'GABAPENTIN', active_ingredients: [{ name: 'GABAPENTIN', strength: '100 mg' }] },
-  alfaxalone: { ndc_code: '60267-001-01', ndc_11: '60267000101', proprietary_name: 'ALFAXAN', nonproprietary_name: 'ALFAXALONE', active_ingredients: [{ name: 'ALFAXALONE', strength: '10 mg/mL' }] },
-  grapiprant: { ndc_code: '00010-4530-01', ndc_11: '00010453001', proprietary_name: 'GALLIPRANT', nonproprietary_name: 'GRAPIPRANT', active_ingredients: [{ name: 'GRAPIPRANT', strength: '20 mg' }] },
   carprofen: { ndc_code: '00069-0520-01', ndc_11: '00069052001', proprietary_name: 'RIMADYL', nonproprietary_name: 'CARPROFEN', active_ingredients: [{ name: 'CARPROFEN', strength: '25 mg' }] },
-  levetiracetam: { ndc_code: '50474-594-01', ndc_11: '50474059401', proprietary_name: 'KEPPRA', nonproprietary_name: 'LEVETIRACETAM', active_ingredients: [{ name: 'LEVETIRACETAM', strength: '250 mg' }] },
-  methimazole: { ndc_code: '43261-001-01', ndc_11: '43261000101', proprietary_name: 'FELIMAZOLE', nonproprietary_name: 'METHIMAZOLE', active_ingredients: [{ name: 'METHIMAZOLE', strength: '2.5 mg' }] },
-  furosemide: { ndc_code: '00010-3101-01', ndc_11: '00010310101', proprietary_name: 'SALIX / LASIX', nonproprietary_name: 'FUROSEMIDE', active_ingredients: [{ name: 'FUROSEMIDE', strength: '50 mg' }] },
-  spironolactone: { ndc_code: '00025-1031-01', ndc_11: '00025103101', proprietary_name: 'ALDACTONE', nonproprietary_name: 'SPIRONOLACTONE', active_ingredients: [{ name: 'SPIRONOLACTONE', strength: '25 mg' }] },
-  amlodipine: { ndc_code: '00069-1520-01', ndc_11: '00069152001', proprietary_name: 'NORVASC', nonproprietary_name: 'AMLODIPINE BESYLATE', active_ingredients: [{ name: 'AMLODIPINE BESYLATE', strength: '2.5 mg' }] },
-  cyclosporine: { ndc_code: '00058-0240-01', ndc_11: '00058024001', proprietary_name: 'ATOPICA', nonproprietary_name: 'CYCLOSPORINE', active_ingredients: [{ name: 'CYCLOSPORINE', strength: '100 mg/mL' }] },
-  sucralfate: { ndc_code: '50474-710-01', ndc_11: '50474071001', proprietary_name: 'CARAFATE', nonproprietary_name: 'SUCRALFATE', active_ingredients: [{ name: 'SUCRALFATE', strength: '1 g' }] },
-  omeprazole: { ndc_code: '00006-0038-01', ndc_11: '00006003801', proprietary_name: 'GASTROGARD', nonproprietary_name: 'OMEPRAZOLE', active_ingredients: [{ name: 'OMEPRAZOLE', strength: '2.28 g' }] },
-  tramadol: { ndc_code: '50474-610-01', ndc_11: '50474061001', proprietary_name: 'ULTRAM', nonproprietary_name: 'TRAMADOL HYDROCHLORIDE', active_ingredients: [{ name: 'TRAMADOL HYDROCHLORIDE', strength: '50 mg' }] },
-  adequan: { ndc_code: '10797-001-05', ndc_11: '10797000105', proprietary_name: 'ADEQUAN CANINE', nonproprietary_name: 'POLYSULFATED GLYCOSAMINOGLYCAN', active_ingredients: [{ name: 'POLYSULFATED GLYCOSAMINOGLYCAN', strength: '100 mg/mL' }] },
-  interceptor: { ndc_code: '00058-0130-01', ndc_11: '00058013001', proprietary_name: 'INTERCEPTOR', nonproprietary_name: 'MILBEMYCIN OXIME', active_ingredients: [{ name: 'MILBEMYCIN OXIME', strength: '2.3 mg' }] },
-  bravecto: { ndc_code: '00061-4321-01', ndc_11: '00061432101', proprietary_name: 'BRAVECTO', nonproprietary_name: 'FLURALANER', active_ingredients: [{ name: 'FLURALANER', strength: '250 mg' }] },
-  nexgard: { ndc_code: '00010-4351-01', ndc_11: '00010435101', proprietary_name: 'NEXGARD', nonproprietary_name: 'AFOXOLANER', active_ingredients: [{ name: 'AFOXOLANER', strength: '28.3 mg' }] },
-  simparica: { ndc_code: '00069-0231-01', ndc_11: '00069023101', proprietary_name: 'SIMPARICA', nonproprietary_name: 'SAROLANER', active_ingredients: [{ name: 'SAROLANER', strength: '10 mg' }] },
-  metronidazole: { ndc_code: '00058-0410-01', ndc_11: '00058041001', proprietary_name: 'FLAGYL', nonproprietary_name: 'METRONIDAZOLE', active_ingredients: [{ name: 'METRONIDAZOLE', strength: '250 mg' }] },
-  tylosin: { ndc_code: '00098-0511-01', ndc_11: '00098051101', proprietary_name: 'TYLAN', nonproprietary_name: 'TYLOSIN TARTRATE', active_ingredients: [{ name: 'TYLOSIN TARTRATE', strength: '100 g' }] },
-  tobrex: { ndc_code: '00065-0644-05', ndc_11: '00065064405', proprietary_name: 'TOBREX', nonproprietary_name: 'TOBRAMYCIN', active_ingredients: [{ name: 'TOBRAMYCIN', strength: '0.3%' }] },
-  nizoral: { ndc_code: '50458-223-06', ndc_11: '50458022306', proprietary_name: 'NIZORAL', nonproprietary_name: 'KETOCONAZOLE', active_ingredients: [{ name: 'KETOCONAZOLE', strength: '200 mg' }] },
-  itraconazole: { ndc_code: '50474-702-01', ndc_11: '50474070201', proprietary_name: 'SPORANOX', nonproprietary_name: 'ITRACONAZOLE', active_ingredients: [{ name: 'ITRACONAZOLE', strength: '100 mg' }] },
-  cefpodoxime: { ndc_code: '00010-4401-01', ndc_11: '00010440101', proprietary_name: 'SIMPLICEF', nonproprietary_name: 'CEFPODOXIME PROXETIL', active_ingredients: [{ name: 'CEFPODOXIME PROXETIL', strength: '100 mg' }] },
-  simplicef: { ndc_code: '00010-4401-01', ndc_11: '00010440101', proprietary_name: 'SIMPLICEF', nonproprietary_name: 'CEFPODOXIME PROXETIL', active_ingredients: [{ name: 'CEFPODOXIME PROXETIL', strength: '100 mg' }] },
-  keflex: { ndc_code: '00006-0012-01', ndc_11: '00006001201', proprietary_name: 'KEFLEX', nonproprietary_name: 'CEPHALEXIN', active_ingredients: [{ name: 'CEPHALEXIN', strength: '500 mg' }] },
-  zeniquin: { ndc_code: '00069-1140-01', ndc_11: '00069114001', proprietary_name: 'ZENIQUIN', nonproprietary_name: 'MARBOFLOXACIN', active_ingredients: [{ name: 'MARBOFLOXACIN', strength: '25 mg' }] },
-  reglan: { ndc_code: '00031-6701-01', ndc_11: '00031670101', proprietary_name: 'REGLAN', nonproprietary_name: 'METOCLOPRAMIDE HYDROCHLORIDE', active_ingredients: [{ name: 'METOCLOPRAMIDE HYDROCHLORIDE', strength: '10 mg' }] },
-  pepcid: { ndc_code: '00006-0040-01', ndc_11: '00006004001', proprietary_name: 'PEPCID', nonproprietary_name: 'FAMOTIDINE', active_ingredients: [{ name: 'FAMOTIDINE', strength: '20 mg' }] },
-  pyrantel: { ndc_code: '00069-0210-01', ndc_11: '00069021001', proprietary_name: 'NEXGARD COMBO / NEMEX', nonproprietary_name: 'PYRANTEL PAMOATE', active_ingredients: [{ name: 'PYRANTEL PAMOATE', strength: '50 mg/mL' }] },
-  fenbendazole: { ndc_code: '00061-0251-01', ndc_11: '00061025101', proprietary_name: 'PANACUR', nonproprietary_name: 'FENBENDAZOLE', active_ingredients: [{ name: 'FENBENDAZOLE', strength: '222 mg/g' }] },
-  clindamycin: { ndc_code: '50474-512-01', ndc_11: '50474051201', proprietary_name: 'ANTIROBE', nonproprietary_name: 'CLINDAMYCIN HYDROCHLORIDE', active_ingredients: [{ name: 'CLINDAMYCIN HYDROCHLORIDE', strength: '25 mg' }] },
-  praziquantel: { ndc_code: '00010-4320-01', ndc_11: '00010432001', proprietary_name: 'DRONCIT', nonproprietary_name: 'PRAZIQUANTEL', active_ingredients: [{ name: 'PRAZIQUANTEL', strength: '34 mg' }] },
-  theophylline: { ndc_code: '00025-0721-01', ndc_11: '00025072101', proprietary_name: 'THEO-24', nonproprietary_name: 'THEOPHYLLINE', active_ingredients: [{ name: 'THEOPHYLLINE', strength: '100 mg' }] },
-  atropine: { ndc_code: '00065-0080-05', ndc_11: '00065008005', proprietary_name: 'ISOPTO ATROPINE', nonproprietary_name: 'ATROPINE SULFATE', active_ingredients: [{ name: 'ATROPINE SULFATE', strength: '1%' }] },
-  prednisone: { ndc_code: '00054-4728-25', ndc_11: '00054472825', proprietary_name: 'DELTASONE', nonproprietary_name: 'PREDNISONE', active_ingredients: [{ name: 'PREDNISOLONE', strength: '5 mg' }] },
-  ivermectin: { ndc_code: '00010-4181-01', ndc_11: '00010418101', proprietary_name: 'HEARTGARD', nonproprietary_name: 'IVERMECTIN', active_ingredients: [{ name: 'IVERMECTIN', strength: '68 mcg' }] }
+  furosemide: { ndc_code: '00010-3101-01', ndc_11: '00010310101', proprietary_name: 'SALIX / LASIX', nonproprietary_name: 'FUROSEMIDE', active_ingredients: [{ name: 'FUROSEMIDE', strength: '50 mg' }] }
 };
 
-// 2. 동의어 그룹
 const ALIAS_GROUP_LIST = [
   { masterKey: 'doxycycline', aliases: ['doxycycline', 'doxycyclin', 'vibramycin', 'doxy'] },
   { masterKey: 'enrofloxacin', aliases: ['enrofloxacin', 'enrofloxacine', 'baytril', 'enroflox'] },
   { masterKey: 'ciprofloxacin', aliases: ['ciprofloxacin', 'ciloxan', 'cipro'] },
-  { masterKey: 'ofloxacin', aliases: ['ofloxacin', 'ocuflox'] },
-  { masterKey: 'labetalol', aliases: ['labetalol'] },
-  { masterKey: 'benazepril', aliases: ['benazepril', 'lotensin'] },
-  { masterKey: 'orbifloxacin', aliases: ['orbifloxacin', 'orbax'] },
-  { masterKey: 'pimobendan', aliases: ['pimobendan', 'vetmedin'] },
-  { masterKey: 'clavamox', aliases: ['clavamox', 'amoxicillin', 'amoxi'] },
-  { masterKey: 'apoquel', aliases: ['apoquel', 'oclacitinib'] },
-  { masterKey: 'cerenia', aliases: ['cerenia', 'maropitant'] },
-  { masterKey: 'metacam', aliases: ['metacam', 'meloxicam'] },
-  { masterKey: 'temaril', aliases: ['temaril', 'temarilp', 'temaril-p', 'prednisolone'] },
   { masterKey: 'gabapentin', aliases: ['gabapentin', 'neurontin'] },
-  { masterKey: 'alfaxalone', aliases: ['alfaxalone', 'alfaxan', 'alfax'] },
-  { masterKey: 'grapiprant', aliases: ['grapiprant', 'galliprant'] },
   { masterKey: 'carprofen', aliases: ['carprofen', 'rimadyl', 'carprovet'] },
-  { masterKey: 'levetiracetam', aliases: ['levetiracetam', 'keppra'] },
-  { masterKey: 'methimazole', aliases: ['methimazole', 'felimazole'] },
-  { masterKey: 'furosemide', aliases: ['furosemide', 'salix', 'lasix'] },
-  { masterKey: 'spironolactone', aliases: ['spironolactone', 'aldactone'] },
-  { masterKey: 'amlodipine', aliases: ['amlodipine', 'norvasc'] },
-  { masterKey: 'cyclosporine', aliases: ['cyclosporine', 'atopica'] },
-  { masterKey: 'sucralfate', aliases: ['sucralfate', 'carafate'] },
-  { masterKey: 'omeprazole', aliases: ['omeprazole', 'gastrogard'] },
-  { masterKey: 'tramadol', aliases: ['tramadol', 'ultram'] },
-  { masterKey: 'adequan', aliases: ['adequan', 'polysulfatedglycosaminoglycan', 'psgag'] },
-  { masterKey: 'interceptor', aliases: ['interceptor', 'milbemycin', 'milbemycinoxime'] },
-  { masterKey: 'bravecto', aliases: ['bravecto', 'fluralaner'] },
-  { masterKey: 'nexgard', aliases: ['nexgard', 'afoxolaner'] },
-  { masterKey: 'simparica', aliases: ['simparica', 'sarolaner'] },
-  { masterKey: 'metronidazole', aliases: ['metronidazole', 'flagyl'] },
-  { masterKey: 'tylosin', aliases: ['tylosin', 'tylan', 'tylosintartrate'] },
-  { masterKey: 'tobrex', aliases: ['tobrex', 'tobramycin'] },
-  { masterKey: 'nizoral', aliases: ['nizoral', 'ketoconazole'] },
-  { masterKey: 'itraconazole', aliases: ['itraconazole', 'sporanox'] },
-  { masterKey: 'cefpodoxime', aliases: ['cefpodoxime', 'simplicef', 'cefpodoximeproxetil'] },
-  { masterKey: 'simplicef', aliases: ['simplicef', 'cefpodoxime'] },
-  { masterKey: 'keflex', aliases: ['keflex', 'cephalexin'] },
-  { masterKey: 'zeniquin', aliases: ['zeniquin', 'marbofloxacin'] },
-  { masterKey: 'reglan', aliases: ['reglan', 'metoclopramide'] },
-  { masterKey: 'pepcid', aliases: ['pepcid', 'famotidine'] },
-  { masterKey: 'pyrantel', aliases: ['pyrantel', 'pyrantelpamoate', 'nemex'] },
-  { masterKey: 'fenbendazole', aliases: ['fenbendazole', 'fenbendazol', 'panacur'] },
-  { masterKey: 'clindamycin', aliases: ['clindamycin', 'clindamycine', 'antirobe'] },
-  { masterKey: 'praziquantel', aliases: ['praziquantel', 'praziquantell', 'droncit'] },
-  { masterKey: 'theophylline', aliases: ['theophylline', 'theo24', 'theo-24'] },
-  { masterKey: 'atropine', aliases: ['atropine'] },
-  { masterKey: 'prednisone', aliases: ['prednisone', 'deltasone'] },
-  { masterKey: 'ivermectin', aliases: ['ivermectin', 'heartgard'] }
+  { masterKey: 'furosemide', aliases: ['furosemide', 'salix', 'lasix'] }
 ];
 
 if (SUPABASE_URL && SUPABASE_KEY) {
@@ -244,18 +147,11 @@ async function lookupDrugFromDb(drugInput) {
     rawTerm = TYPO_MAP[cleanInput];
   }
 
-  const lowerTerm = rawTerm.toLowerCase();
   const normalizedTerm = normalizeString(rawTerm);
-  const cleanDigits = rawTerm.replace(/[^0-9]/g, '');
-
   if (normalizedTerm.length < 3) return null;
 
-  // Step 1: 완전 일치 매칭
   const matchedGroup = ALIAS_GROUP_LIST.find(group => 
-    group.aliases.some(alias => {
-      const normAlias = normalizeString(alias);
-      return normalizedTerm === normAlias;
-    })
+    group.aliases.some(alias => normalizeString(alias) === normalizedTerm)
   );
 
   if (matchedGroup) {
@@ -274,49 +170,9 @@ async function lookupDrugFromDb(drugInput) {
     }
   }
 
-  // Step 2: Supabase DB 캐시 정밀 토큰 검색
-  await ensureDrugDictionaryLoaded();
-
-  if (drugDictionaryCache.length > 0) {
-    const matched = drugDictionaryCache.find(d => {
-      const propNorm = normalizeString(d.proprietary_name || '');
-      const nonPropNorm = normalizeString(d.nonproprietary_name || '');
-      const ndc = (d.ndc_code || '').toLowerCase();
-      const ndc11 = (d.ndc_11 || '').toLowerCase();
-      const ingredients = d.active_ingredients || [];
-
-      if (propNorm === normalizedTerm || nonPropNorm === normalizedTerm || ndc === lowerTerm) {
-        return true;
-      }
-      if (cleanDigits.length >= 8 && ndc11 === cleanDigits) {
-        return true;
-      }
-
-      return ingredients.some(ing => {
-        const rawIngName = (ing.name || '').toLowerCase();
-        const ingTokens = rawIngName.split(/\s+/).map(t => normalizeString(t));
-        return ingTokens.includes(normalizedTerm);
-      });
-    });
-
-    if (matched) {
-      return {
-        name: drugInput,
-        ndc_code: matched.ndc_code,
-        ndc_11: matched.ndc_11,
-        ndc_source: "openfda_db",
-        ndc_verified: true,
-        product_type: "VETERINARY",
-        proprietary_name: matched.proprietary_name || matched.nonproprietary_name || rawTerm,
-        active_ingredients: matched.active_ingredients || [{ name: rawTerm, strength: '' }]
-      };
-    }
-  }
-
   return null;
 }
 
-// DB 기반 DNI 검사 엔진
 async function evaluateDniConflictsFromDb(prescriptions, supplements) {
   const conflicts = [];
   if (!supabase) return conflicts;
@@ -326,9 +182,7 @@ async function evaluateDniConflictsFromDb(prescriptions, supplements) {
     if (error || !rules) return conflicts;
 
     for (const rx of prescriptions) {
-      const ingredients = rx.active_ingredients || [];
       const rxName = (rx.name || '').toUpperCase();
-
       for (const supp of supplements) {
         const suppName = (typeof supp === 'string' ? supp : supp.name || '').toUpperCase();
 
@@ -336,17 +190,7 @@ async function evaluateDniConflictsFromDb(prescriptions, supplements) {
           const matchSupp = rule.supplement_keywords.some(k => suppName.includes(k));
           if (!matchSupp) continue;
 
-          let matchIng = rule.ingredient_keywords.some(k => rxName.includes(k));
-
-          if (!matchIng) {
-            for (const ing of ingredients) {
-              const ingName = (ing.name || '').toUpperCase();
-              if (rule.ingredient_keywords.some(k => ingName.includes(k))) {
-                matchIng = true;
-                break;
-              }
-            }
-          }
+          const matchIng = rule.ingredient_keywords.some(k => rxName.includes(k));
 
           if (matchIng) {
             conflicts.push({
@@ -369,17 +213,87 @@ async function evaluateDniConflictsFromDb(prescriptions, supplements) {
   return conflicts;
 }
 
+// Supabase cyp450_chelation_rules 기반 간 & 신장 대사 부하 동적 연산 엔진
+async function calculateMetabolicStrainIndices(prescriptions, supplements) {
+  let hepaticRaw = 0;
+  let renalRaw = 0;
+
+  let cypRules = [];
+  if (supabase) {
+    try {
+      const { data } = await supabase.from('cyp450_chelation_rules').select('*');
+      if (data) cypRules = data;
+    } catch (e) {
+      console.warn("[seon] CYP rules load fail, fallback active");
+    }
+  }
+
+  for (const rx of prescriptions) {
+    const rxNameLower = (rx.name || '').toLowerCase();
+    const freq = rx.frequency_per_day || 1;
+
+    const dbRule = cypRules.find(r => 
+      rxNameLower.includes((r.drug_keyword || r.agent_a || '').toLowerCase())
+    );
+
+    if (dbRule && (dbRule.hepatic_weight !== null || dbRule.renal_weight !== null)) {
+      hepaticRaw += Number(dbRule.hepatic_weight || 0.4) * freq * 35;
+      renalRaw += Number(dbRule.renal_weight || 0.4) * freq * 35;
+    } else {
+      // Fallback
+      if (rxNameLower.includes('doxy') || rxNameLower.includes('cipro') || rxNameLower.includes('enro')) {
+        hepaticRaw += 0.40 * freq * 30;
+        renalRaw += 0.60 * freq * 30;
+      } else if (rxNameLower.includes('carprofen') || rxNameLower.includes('melo')) {
+        hepaticRaw += 0.65 * freq * 35;
+        renalRaw += 0.35 * freq * 35;
+      } else if (rxNameLower.includes('furo') || rxNameLower.includes('gaba')) {
+        hepaticRaw += 0.15 * freq * 35;
+        renalRaw += 0.80 * freq * 35;
+      } else {
+        hepaticRaw += 0.35 * freq * 30;
+        renalRaw += 0.35 * freq * 30;
+      }
+    }
+  }
+
+  for (const supp of supplements) {
+    const suppName = (typeof supp === 'string' ? supp : supp.name || '').toLowerCase();
+    if (suppName.includes('칼슘') || suppName.includes('calcium') || suppName.includes('미네랄')) {
+      renalRaw += 12;
+    } else {
+      hepaticRaw += 8;
+    }
+  }
+
+  const hepaticIndex = Math.min(100, Math.max(0, Math.round(hepaticRaw)));
+  const renalIndex = Math.min(100, Math.max(0, Math.round(renalRaw)));
+
+  const getStatus = (idx) => {
+    if (idx < 25) return "NORMAL";
+    if (idx < 60) return "MODERATE";
+    if (idx < 85) return "HIGH";
+    return "CRITICAL";
+  };
+
+  return {
+    hepatic_strain_index: hepaticIndex,
+    hepatic_status: getStatus(hepaticIndex),
+    renal_strain_index: renalIndex,
+    renal_status: getStatus(renalIndex)
+  };
+}
+
 app.get('/health', async (req, res) => {
   await ensureDrugDictionaryLoaded();
   res.json({ status: 'ok', cached_drugs: drugDictionaryCache.length, timestamp: new Date().toISOString() });
 });
 
-// v1 분석 엔드포인트: Rate Limiter 및 API Key 인증 미들웨어 적용
 app.post('/v1/analyze', rateLimiter, authenticateApiKey, async (req, res) => {
   try {
     await ensureDrugDictionaryLoaded();
 
-    const { prescriptions = [], supplements = [], pet_bio } = req.body;
+    const { prescriptions = [], supplements = [] } = req.body;
 
     const analyzedPrescriptions = await Promise.all(
       prescriptions.map(async (item) => {
@@ -410,7 +324,9 @@ app.post('/v1/analyze', rateLimiter, authenticateApiKey, async (req, res) => {
 
     const conflicts = await evaluateDniConflictsFromDb(analyzedPrescriptions, supplements);
     const conflictDetected = conflicts.length > 0;
-    const hasHigh = conflicts.some(c => c.severity === 'HIGH');
+    const hasHigh = conflicts.some(c => c.severity === 'HIGH' || c.severity === 'high');
+
+    const strainMetrics = await calculateMetabolicStrainIndices(analyzedPrescriptions, supplements);
 
     let recommendedSchedule = "제약 없음 — 평소 급여 스케줄을 유지하세요.";
     if (conflictDetected) {
@@ -425,19 +341,19 @@ app.post('/v1/analyze', rateLimiter, authenticateApiKey, async (req, res) => {
       has_conflict: conflictDetected,
       conflicts_count: conflicts.length,
       conflicts: conflicts,
-      dni_conflicts: conflicts,       // 프론트 호환용
-      interactions: conflicts,        // 프론트 호환용
       recommended_schedule: recommendedSchedule,
-      schedule_recommendation: recommendedSchedule, // 프론트 호환용
-      summary: recommendedSchedule,                 // 프론트 호환용
       isolation_hours: conflictDetected ? (hasHigh ? 4 : 2) : 0,
-      hepatic_strain_index: 0,        // 프론트 호환용
-      renal_clearance_burden: "LOW",   // 프론트 호환용
+      
+      // 간 & 신장 동적 연산 수치
+      hepatic_strain_index: strainMetrics.hepatic_strain_index,
+      hepatic_status: strainMetrics.hepatic_status,
+      renal_strain_index: strainMetrics.renal_strain_index,
+      renal_status: strainMetrics.renal_status,
+
       prescriptions: analyzedPrescriptions,
       supplements: supplements
     };
 
-    // 래핑 구조 및 평문 구조 모두 응답
     return res.json({
       ...payload,
       data: payload
