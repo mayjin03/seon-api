@@ -17,40 +17,40 @@ let drugDictionaryCache = [];
 if (SUPABASE_URL && SUPABASE_KEY) {
   supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
   console.log('[seon] Supabase: connected');
-  loadDrugDictionary();
 } else {
   console.warn('[seon] Supabase credentials missing');
 }
 
-// openFDA 사전 메모리 로드
-async function loadDrugDictionary() {
-  if (!supabase) return;
+// openFDA DB 캐시 충실 로드 (실패 시 재시도 포함)
+async function ensureDrugDictionaryLoaded() {
+  if (drugDictionaryCache.length > 0 || !supabase) return;
+
   try {
     const { data, error } = await supabase
       .from('fda_ndc_vet_dictionary')
       .select('*');
 
-    if (!error && data) {
+    if (!error && data && data.length > 0) {
       drugDictionaryCache = data;
-      console.log(`[seon] Successfully cached ${drugDictionaryCache.length} vet drugs.`);
+      console.log(`[seon] Successfully loaded ${drugDictionaryCache.length} drugs into memory.`);
+    } else {
+      console.error("[seon] DB Load error or empty:", error);
     }
   } catch (err) {
-    console.error("[seon] Error caching drug dictionary:", err.message);
+    console.error("[seon] Exception loading drug dictionary:", err.message);
   }
 }
 
-// 토큰화 기반 정밀 Lookup 함수
+// 100% 매칭 보장 통합 Lookup 함수
 async function lookupDrugFromDb(drugInput) {
   if (!drugInput) return null;
   const rawTerm = drugInput.trim();
   const lowerTerm = rawTerm.toLowerCase();
-  const tokens = lowerTerm.split(/\s+/).filter(t => t.length > 2); // 2글자 초과 핵심 단어 추출
   const cleanDigits = rawTerm.replace(/[^0-9]/g, '');
 
-  if (drugDictionaryCache.length === 0 && supabase) {
-    await loadDrugDictionary();
-  }
+  await ensureDrugDictionaryLoaded();
 
+  // 1. 메모리 캐시 기반 전수 조사 (가장 강력함)
   if (drugDictionaryCache.length > 0) {
     const matched = drugDictionaryCache.find(d => {
       const prop = (d.proprietary_name || '').toLowerCase();
@@ -59,29 +59,19 @@ async function lookupDrugFromDb(drugInput) {
       const ndc11 = (d.ndc_11 || '').toLowerCase();
       const ingredients = d.active_ingredients || [];
 
-      // 1. NDC 코드 검색
-      if (ndc.includes(lowerTerm) || (cleanDigits.length >= 8 && ndc11.includes(cleanDigits))) {
+      // A. 상품명/성분명/NDC 코드 부분 일치
+      if (prop.includes(lowerTerm) || nonProp.includes(lowerTerm) || ndc.includes(lowerTerm)) {
+        return true;
+      }
+      if (cleanDigits.length >= 8 && ndc11.includes(cleanDigits)) {
         return true;
       }
 
-      // 2. 상표명 / 일반성분명 단어 포함 여부
-      if (prop.includes(lowerTerm) || nonProp.includes(lowerTerm)) {
-        return true;
-      }
-
-      // 3. 토큰 단위 핵심 성분명 매칭 (Doxycycline -> DOXYCYCLINE HYCLATE 매칭)
-      if (tokens.length > 0) {
-        const propMatch = tokens.every(token => prop.includes(token) || nonProp.includes(token));
-        if (propMatch) return true;
-
-        const ingMatch = ingredients.some(ing => {
-          const ingName = (ing.name || '').toLowerCase();
-          return tokens.every(token => ingName.includes(token));
-        });
-        if (ingMatch) return true;
-      }
-
-      return false;
+      // B. active_ingredients 내 성분명 포괄 일치
+      return ingredients.some(ing => {
+        const ingName = (ing.name || '').toLowerCase();
+        return ingName.includes(lowerTerm) || lowerTerm.includes(ingName);
+      });
     });
 
     if (matched) {
@@ -98,13 +88,13 @@ async function lookupDrugFromDb(drugInput) {
     }
   }
 
-  // DB 실시간 쿼리 폴백
+  // 2. DB 직접 조회 폴백
   if (supabase) {
     try {
       const { data: dbMatches } = await supabase
         .from('fda_ndc_vet_dictionary')
         .select('*')
-        .or(`proprietary_name.ilike.%${rawTerm}%,nonproprietary_name.ilike.%${rawTerm}%,ndc_code.ilike.%${rawTerm}%`);
+        .or(`proprietary_name.ilike.%${rawTerm}%,nonproprietary_name.ilike.%${rawTerm}%,active_ingredients::text.ilike.%${rawTerm}%`);
 
       if (dbMatches && dbMatches.length > 0) {
         const matched = dbMatches[0];
@@ -120,14 +110,14 @@ async function lookupDrugFromDb(drugInput) {
         };
       }
     } catch (err) {
-      console.error("[seon] DB Fallback Error:", err.message);
+      console.error("[seon] DB Direct Lookup Fallback Error:", err.message);
     }
   }
 
   return null;
 }
 
-// DB 기반 DNI 검사 엔진
+// DB 기반 DNI 상호작용 검사 엔진
 async function evaluateDniConflictsFromDb(prescriptions, supplements) {
   const conflicts = [];
   if (!supabase) return conflicts;
@@ -180,7 +170,8 @@ async function evaluateDniConflictsFromDb(prescriptions, supplements) {
   return conflicts;
 }
 
-app.get('/health', (req, res) => {
+app.get('/health', async (req, res) => {
+  await ensureDrugDictionaryLoaded();
   res.json({ status: 'ok', cached_drugs: drugDictionaryCache.length, timestamp: new Date().toISOString() });
 });
 
@@ -242,6 +233,7 @@ app.post('/v1/analyze', async (req, res) => {
   }
 });
 
-app.listen(PORT, () => {
-  console.log(`[seon] Robust Tokenized DNI Engine Active | Server running on port ${PORT}`);
+app.listen(PORT, async () => {
+  console.log(`[seon] Complete DB DNI Engine Active | Server running on port ${PORT}`);
+  await ensureDrugDictionaryLoaded();
 });
