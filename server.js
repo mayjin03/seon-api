@@ -22,7 +22,6 @@ if (SUPABASE_URL && SUPABASE_KEY) {
   console.warn('[seon] Supabase credentials missing');
 }
 
-// 약물 사전 캐시 로드 (997개 수의용 openFDA DB 전체 메모리 적재)
 async function loadDrugDictionary() {
   if (!supabase) return;
   try {
@@ -33,15 +32,12 @@ async function loadDrugDictionary() {
     if (!error && data) {
       drugDictionaryCache = data;
       console.log(`[seon] Loaded ${drugDictionaryCache.length} drugs into memory cache`);
-    } else {
-      console.error("[seon] Failed to load drug dictionary:", error);
     }
   } catch (err) {
     console.error("[seon] Error caching drug dictionary:", err.message);
   }
 }
 
-// 메모리 캐시 기반 정밀 약물 Lookup (100% 매칭 보장)
 async function lookupDrugFromDb(drugInput) {
   if (!drugInput) return null;
   const searchTerm = drugInput.trim().toLowerCase();
@@ -51,30 +47,36 @@ async function lookupDrugFromDb(drugInput) {
     await loadDrugDictionary();
   }
 
-  // 1차: proprietary_name 또는 nonproprietary_name 또는 ndc_code 포괄 검색
+  // 1. Exact / Word Boundary Match on Proprietary or Non-Proprietary Name
   let matched = drugDictionaryCache.find(d => {
     const prop = (d.proprietary_name || '').toLowerCase();
     const nonProp = (d.nonproprietary_name || '').toLowerCase();
-    const ndc = (d.ndc_code || '').toLowerCase();
-    const ndc11 = (d.ndc_11 || '').toLowerCase();
-
-    return prop.includes(searchTerm) || nonProp.includes(searchTerm) || ndc.includes(searchTerm) || (cleanDigits.length >= 8 && ndc11.includes(cleanDigits));
+    return prop === searchTerm || nonProp === searchTerm;
   });
 
-  // 2차: active_ingredients JSONB 내 성분명 키워드 검색
+  // 2. Active Ingredients Exact Match
   if (!matched) {
     matched = drugDictionaryCache.find(d => {
       const ingredients = d.active_ingredients || [];
-      return ingredients.some(ing => {
-        const ingName = (ing.name || '').toLowerCase();
-        return ingName.includes(searchTerm) || searchTerm.includes(ingName);
-      });
+      return ingredients.some(ing => (ing.name || '').toLowerCase() === searchTerm);
+    });
+  }
+
+  // 3. Partial Match Fallback
+  if (!matched) {
+    matched = drugDictionaryCache.find(d => {
+      const prop = (d.proprietary_name || '').toLowerCase();
+      const nonProp = (d.nonproprietary_name || '').toLowerCase();
+      const ndc = (d.ndc_code || '').toLowerCase();
+      const ndc11 = (d.ndc_11 || '').toLowerCase();
+
+      return prop.includes(searchTerm) || nonProp.includes(searchTerm) || ndc.includes(searchTerm) || (cleanDigits.length >= 8 && ndc11.includes(cleanDigits));
     });
   }
 
   if (matched) {
     return {
-      name: matched.proprietary_name || matched.nonproprietary_name || drugInput,
+      name: drugInput,
       ndc_code: matched.ndc_code,
       ndc_11: matched.ndc_11,
       ndc_source: "openfda_db",
@@ -88,7 +90,6 @@ async function lookupDrugFromDb(drugInput) {
   return null;
 }
 
-// DB 기반 DNI 검사 엔진
 async function evaluateDniConflictsFromDb(prescriptions, supplements) {
   const conflicts = [];
   if (!supabase) return conflicts;
@@ -101,27 +102,35 @@ async function evaluateDniConflictsFromDb(prescriptions, supplements) {
       const ingredients = rx.active_ingredients || [];
       const rxName = (rx.name || '').toUpperCase();
 
-      for (const ing of ingredients) {
-        const ingName = (ing.name || '').toUpperCase();
+      for (const supp of supplements) {
+        const suppName = (typeof supp === 'string' ? supp : supp.name || '').toUpperCase();
 
-        for (const supp of supplements) {
-          const suppName = (typeof supp === 'string' ? supp : supp.name || '').toUpperCase();
+        for (const rule of rules) {
+          const matchSupp = rule.supplement_keywords.some(k => suppName.includes(k));
+          if (!matchSupp) continue;
 
-          for (const rule of rules) {
-            const matchIng = rule.ingredient_keywords.some(k => ingName.includes(k) || rxName.includes(k));
-            const matchSupp = rule.supplement_keywords.some(k => suppName.includes(k));
+          let matchIng = rule.ingredient_keywords.some(k => rxName.includes(k));
 
-            if (matchIng && matchSupp) {
-              conflicts.push({
-                drug_name: rx.name,
-                matched_ingredient: ing.name || rx.name,
-                supplement_name: supp,
-                severity: rule.severity,
-                conflict_type: rule.conflict_type,
-                message: rule.message_ko,
-                recommended_action: rule.recommended_action
-              });
+          if (!matchIng) {
+            for (const ing of ingredients) {
+              const ingName = (ing.name || '').toUpperCase();
+              if (rule.ingredient_keywords.some(k => ingName.includes(k))) {
+                matchIng = true;
+                break;
+              }
             }
+          }
+
+          if (matchIng) {
+            conflicts.push({
+              drug_name: rx.name,
+              matched_ingredient: rx.name,
+              supplement_name: supp,
+              severity: rule.severity,
+              conflict_type: rule.conflict_type,
+              message: rule.message_ko,
+              recommended_action: rule.recommended_action
+            });
           }
         }
       }
