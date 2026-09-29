@@ -1,4 +1,5 @@
 import express from 'express';
+import cors from 'cors';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { createClient } from '@supabase/supabase-js';
@@ -12,9 +13,14 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = process.env.PORT || 10000;
 
+// CORS 허용 (모든 도메인에서의 API 요청 허용)
+app.use(cors());
+
+// Request Body JSON 파싱
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
+// Supabase 클라이언트 생성
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_ANON_KEY
@@ -48,8 +54,8 @@ app.post('/v1/analyze', async (req, res) => {
     const { prescriptions = [], supplements = [] } = req.body;
 
     // 입력 데이터 추출
-    const medList = prescriptions.map(p => typeof p === 'string' ? p.toLowerCase() : p.name?.toLowerCase()).filter(Boolean);
-    const suppList = supplements.map(s => typeof s === 'string' ? s.toLowerCase() : s.name?.toLowerCase()).filter(Boolean);
+    const medList = prescriptions.map(p => typeof p === 'string' ? p.toLowerCase() : (p.name || p.ingredient || '').toLowerCase()).filter(Boolean);
+    const suppList = supplements.map(s => typeof s === 'string' ? s.toLowerCase() : (s.name || s.ingredient || '').toLowerCase()).filter(Boolean);
 
     // Supabase DNI 데이터 조회
     const { data, error } = await supabase
