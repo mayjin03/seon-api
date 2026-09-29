@@ -145,7 +145,9 @@ function normalizeString(str) {
 }
 
 async function lookupDrugFromDb(drugInput) {
-  if (!drugInput) return null;
+  // [Fail-safe] 문자열이 아닌 입력(숫자·null·객체 등)이 들어와도 500으로 죽지 않도록 방어해요.
+  // (기존 코드는 !drugInput 만 걸러서, 숫자처럼 '참'인 비문자열 값은 .trim() 에서 그대로 터졌어요.)
+  if (typeof drugInput !== 'string' || !drugInput.trim()) return null;
   let rawTerm = drugInput.trim();
   const cleanInput = rawTerm.toLowerCase();
 
@@ -313,6 +315,23 @@ app.post('/v1/analyze', rateLimiter, authenticateApiKey, async (req, res) => {
     await ensureDrugDictionaryLoaded();
 
     const { prescriptions = [], supplements = [] } = req.body;
+
+    // [Fail-safe ①: 미인식 약물 조기 차단] MASTER_DRUG_RECORDS/TYPO_MAP(이 파일이 실제로 약물을
+    // 식별하는 유일한 경로 — lookupDrugFromDb) 어디에서도 식별되지 않는 약물이 하나라도 있으면,
+    // 의미 없는 대사 부하 수치를 계산하지 않고 여기서 바로 422 로 응답해요.
+    // ⚠️ 참고: ensureDrugDictionaryLoaded() 가 Supabase 'fda_ndc_vet_dictionary' 테이블을
+    // drugDictionaryCache 에 캐싱하지만, lookupDrugFromDb() 는 이 캐시를 실제로 조회하지 않아요
+    // (원본 파일부터 그랬어요 — 이번 수정에서 새로 만든 문제가 아니에요). 그래서 이 422 판정은
+    // 사실상 MASTER_DRUG_RECORDS + TYPO_MAP 기준이고, Supabase 사전에만 있는 약물은 아직 여기서도
+    // 인식되지 않아요. 그 캐시를 실제로 연결하려면 fda_ndc_vet_dictionary 의 정확한 컬럼명(성분명이
+    // 어느 컬럼에 들어있는지)을 알려주세요 — 추측으로 잘못 연결하고 싶지 않아서 남겨뒀어요.
+    for (const item of prescriptions) {
+      const drugName = typeof item === 'string' ? item : (item && typeof item === 'object' ? item.name : undefined);
+      const dbResult = await lookupDrugFromDb(drugName);
+      if (!dbResult) {
+        return res.status(422).json({ error: 'UNKNOWN_DRUG', unknown_drug: drugName ?? null });
+      }
+    }
 
     const analyzedPrescriptions = await Promise.all(
       prescriptions.map(async (item) => {
