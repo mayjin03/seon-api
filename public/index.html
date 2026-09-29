@@ -11103,9 +11103,16 @@ function renderSbxWidget(result, view){
     return;
   }
   /* [Fail-safe ②] 백엔드가 422 없이 200 OK 를 유지하는 배포본이어도, 응답의 prescriptions[] 안에
-     미인식 약물(product_type:"UNKNOWN" 또는 ndc_verified:false)이 하나라도 섞여 있으면, 의미 없는
-     대사 부하 수치·충돌 판정을 보여주는 대신 이 경고를 최우선으로 덮어씌워요(health 뷰 포함). */
-  const unknownRx = Array.isArray(b.prescriptions) ? b.prescriptions.find(p => p && (p.product_type === 'UNKNOWN' || p.ndc_verified === false)) : null;
+     미인식 약물이 하나라도 섞여 있으면, 의미 없는 대사 부하 수치·충돌 판정을 보여주는 대신 이
+     경고를 최우선으로 덮어씌워요(health 뷰 포함).
+     ⚠️ 판정 우선순위: ndc_verified === true 는 다른 어떤 필드(product_type 등)와 상관없이
+     '검증된 약물'로 확정해요 — product_type 이 아직 UNKNOWN 이거나 비어있는 배포본(예: DB에서
+     막 찾아왔지만 product_type 컬럼을 안 채운 경우)이어도, ndc_verified:true 하나만으로
+     충분히 신뢰해요. product_type:"UNKNOWN" 체크는 ndc_verified 가 true 가 '아닐' 때만,
+     보조적인 미인식 신호로 봐요. */
+  const unknownRx = Array.isArray(b.prescriptions) ? b.prescriptions.find(p =>
+    p && p.ndc_verified !== true && (p.product_type === 'UNKNOWN' || p.ndc_verified === false)
+  ) : null;
   if(unknownRx){
     const rxLabel = unknownRx.name || unknownRx.proprietary_name || '';
     wrap.innerHTML = `<div class="rounded-xl p-4" style="background:#fff; border:1.5px solid #FCA5A5;">
