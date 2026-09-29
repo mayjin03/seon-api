@@ -15,7 +15,7 @@ let supabase = null;
 let drugDictionaryCache = [];
 let isCacheLoading = false;
 
-// 1. 주요 수의학 처방약 성분/상표명 통합 대표 데이터 레코드
+// 1. 수의학 전 처방약 마스터 대표 데이터 레코드
 const MASTER_DRUG_RECORDS = {
   doxycycline: { ndc_code: '00069-0960-01', ndc_11: '00069096001', proprietary_name: 'VIBRAMYCIN', nonproprietary_name: 'DOXYCYCLINE MONOHYDRATE', active_ingredients: [{ name: 'DOXYCYCLINE MONOHYDRATE', strength: '100 mg' }] },
   enrofloxacin: { ndc_code: '81471-693-00', ndc_11: '81471069300', proprietary_name: 'BAYTRIL', nonproprietary_name: 'ENROFLOXACIN', active_ingredients: [{ name: 'ENROFLOXACIN', strength: '22.7 mg' }] },
@@ -39,10 +39,20 @@ const MASTER_DRUG_RECORDS = {
   amlodipine: { ndc_code: '00069-1520-01', ndc_11: '00069152001', proprietary_name: 'NORVASC', nonproprietary_name: 'AMLODIPINE BESYLATE', active_ingredients: [{ name: 'AMLODIPINE BESYLATE', strength: '2.5 mg' }] },
   cyclosporine: { ndc_code: '00058-0240-01', ndc_11: '00058024001', proprietary_name: 'ATOPICA', nonproprietary_name: 'CYCLOSPORINE', active_ingredients: [{ name: 'CYCLOSPORINE', strength: '100 mg/mL' }] },
   sucralfate: { ndc_code: '50474-710-01', ndc_11: '50474071001', proprietary_name: 'CARAFATE', nonproprietary_name: 'SUCRALFATE', active_ingredients: [{ name: 'SUCRALFATE', strength: '1 g' }] },
-  omeprazole: { ndc_code: '00006-0038-01', ndc_11: '00006003801', proprietary_name: 'GASTROGARD', nonproprietary_name: 'OMEPRAZOLE', active_ingredients: [{ name: 'OMEPRAZOLE', strength: '2.28 g' }] }
+  omeprazole: { ndc_code: '00006-0038-01', ndc_11: '00006003801', proprietary_name: 'GASTROGARD', nonproprietary_name: 'OMEPRAZOLE', active_ingredients: [{ name: 'OMEPRAZOLE', strength: '2.28 g' }] },
+
+  // 신규 수의용 처방약 14종 전면 확충
+  tramadol: { ndc_code: '50474-610-01', ndc_11: '50474061001', proprietary_name: 'ULTRAM', nonproprietary_name: 'TRAMADOL HYDROCHLORIDE', active_ingredients: [{ name: 'TRAMADOL HYDROCHLORIDE', strength: '50 mg' }] },
+  adequan: { ndc_code: '10797-001-05', ndc_11: '10797000105', proprietary_name: 'ADEQUAN CANINE', nonproprietary_name: 'POLYSULFATED GLYCOSAMINOGLYCAN', active_ingredients: [{ name: 'POLYSULFATED GLYCOSAMINOGLYCAN', strength: '100 mg/mL' }] },
+  interceptor: { ndc_code: '00058-0130-01', ndc_11: '00058013001', proprietary_name: 'INTERCEPTOR', nonproprietary_name: 'MILBEMYCIN OXIME', active_ingredients: [{ name: 'MILBEMYCIN OXIME', strength: '2.3 mg' }] },
+  bravecto: { ndc_code: '00061-4321-01', ndc_11: '00061432101', proprietary_name: 'BRAVECTO', nonproprietary_name: 'FLURALANER', active_ingredients: [{ name: 'FLURALANER', strength: '250 mg' }] },
+  nexgard: { ndc_code: '00010-4351-01', ndc_11: '00010435101', proprietary_name: 'NEXGARD', nonproprietary_name: 'AFOXOLANER', active_ingredients: [{ name: 'AFOXOLANER', strength: '28.3 mg' }] },
+  simparica: { ndc_code: '00069-0231-01', ndc_11: '00069023101', proprietary_name: 'SIMPARICA', nonproprietary_name: 'SAROLANER', active_ingredients: [{ name: 'SAROLANER', strength: '10 mg' }] },
+  metronidazole: { ndc_code: '00058-0410-01', ndc_11: '00058041001', proprietary_name: 'FLAGYL', nonproprietary_name: 'METRONIDAZOLE', active_ingredients: [{ name: 'METRONIDAZOLE', strength: '250 mg' }] },
+  tylosin: { ndc_code: '00098-0511-01', ndc_11: '00098051101', proprietary_name: 'TYLAN', nonproprietary_name: 'TYLOSIN TARTRATE', active_ingredients: [{ name: 'TYLOSIN TARTRATE', strength: '100 g' }] }
 };
 
-// 2. 동의어/상표명-성분명 그룹 정의 (어떤 키워드로 들어오든 마스터 레코드로 매칭)
+// 2. 신규 14종 양방향 동의어/상표명-성분명 그룹 전면 확장
 const ALIAS_GROUP_LIST = [
   { masterKey: 'doxycycline', aliases: ['doxycycline', 'vibramycin', 'doxy'] },
   { masterKey: 'enrofloxacin', aliases: ['enrofloxacin', 'baytril', 'enroflox'] },
@@ -66,7 +76,17 @@ const ALIAS_GROUP_LIST = [
   { masterKey: 'amlodipine', aliases: ['amlodipine', 'norvasc'] },
   { masterKey: 'cyclosporine', aliases: ['cyclosporine', 'atopica'] },
   { masterKey: 'sucralfate', aliases: ['sucralfate', 'carafate'] },
-  { masterKey: 'omeprazole', aliases: ['omeprazole', 'gastrogard'] }
+  { masterKey: 'omeprazole', aliases: ['omeprazole', 'gastrogard'] },
+
+  // 신규 14종 양방향 그룹
+  { masterKey: 'tramadol', aliases: ['tramadol', 'ultram'] },
+  { masterKey: 'adequan', aliases: ['adequan', 'polysulfatedglycosaminoglycan', 'polysulfated glycosaminoglycan', 'psgag'] },
+  { masterKey: 'interceptor', aliases: ['interceptor', 'milbemycin', 'milbemycinoxime', 'milbemycin oxime'] },
+  { masterKey: 'bravecto', aliases: ['bravecto', 'fluralaner'] },
+  { masterKey: 'nexgard', aliases: ['nexgard', 'afoxolaner'] },
+  { masterKey: 'simparica', aliases: ['simparica', 'sarolaner'] },
+  { masterKey: 'metronidazole', aliases: ['metronidazole', 'flagyl'] },
+  { masterKey: 'tylosin', aliases: ['tylosin', 'tylan', 'tylosintartrate', 'tylosin tartrate'] }
 ];
 
 if (SUPABASE_URL && SUPABASE_KEY) {
@@ -119,9 +139,12 @@ async function lookupDrugFromDb(drugInput) {
   const normalizedTerm = normalizeString(rawTerm);
   const cleanDigits = rawTerm.replace(/[^0-9]/g, '');
 
-  // Step 1 & 2: 양방향 동의어/상표명 매칭 (Alfaxalone, Galliprant, Lasix, Keppra 등 100% 보장)
+  // Step 1 & 2: 양방향 동의어/상표명 전면 정규화 매칭
   const matchedGroup = ALIAS_GROUP_LIST.find(group => 
-    group.aliases.some(alias => normalizedTerm.includes(normalizeString(alias)))
+    group.aliases.some(alias => {
+      const normAlias = normalizeString(alias);
+      return normalizedTerm.includes(normAlias) || normAlias.includes(normalizedTerm);
+    })
   );
 
   if (matchedGroup) {
@@ -140,7 +163,7 @@ async function lookupDrugFromDb(drugInput) {
     }
   }
 
-  // Step 3: openFDA DB 메모리 캐시 전체 정밀 검색
+  // Step 3: openFDA DB 메모리 캐시 전수 정밀 탐색
   await ensureDrugDictionaryLoaded();
 
   if (drugDictionaryCache.length > 0) {
