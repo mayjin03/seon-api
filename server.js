@@ -1,473 +1,64 @@
-import express from 'express';
-import cors from 'cors';
-import { createClient } from '@supabase/supabase-js';
+const express = require('express');
+const path = require('path');
+const { createClient } = require('@supabase/supabase-js');
+require('dotenv').config();
 
 const app = express();
-const PORT = process.env.PORT || 10000;
+const PORT = process.env.PORT || 3000;
 
-app.use(cors());
+// Request Body JSON 파싱
 app.use(express.json());
 
-const SUPABASE_URL = process.env.SUPABASE_URL;
-const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY;
+// public 폴더 안의 정적 파일(index.html, css, js 등) 제공
+app.use(express.static(path.join(__dirname, 'public')));
 
-let supabase = null;
-let drugDictionaryCache = [];
-let isCacheLoading = false;
+// Supabase 클라이언트 생성
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_ANON_KEY
+);
 
-// B2B API Key 인증 및 요청 수 제한(Rate Limiter) 설정
-const VALID_API_KEYS = new Set([
-  process.env.SEON_DEMO_API_KEY || 'seon_demo_pk_12345',
-  process.env.SEON_LIVE_API_KEY || 'seon_live_pk_67890'
-]);
+// 루트 경로 접속 시 public/index.html 파일 전달
+app.get('/', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
 
-const rateLimitMap = new Map();
-const RATE_LIMIT_WINDOW_MS = 60 * 1000;
-const MAX_REQUESTS_PER_WINDOW = 60;
-
-const rateLimiter = (req, res, next) => {
-  const clientKey = req.headers['x-api-key'] || req.ip;
-  const now = Date.now();
-
-  if (!rateLimitMap.has(clientKey)) {
-    rateLimitMap.set(clientKey, { count: 1, resetTime: now + RATE_LIMIT_WINDOW_MS });
-    return next();
-  }
-
-  const clientStats = rateLimitMap.get(clientKey);
-
-  if (now > clientStats.resetTime) {
-    clientStats.count = 1;
-    clientStats.resetTime = now + RATE_LIMIT_WINDOW_MS;
-    return next();
-  }
-
-  if (clientStats.count >= MAX_REQUESTS_PER_WINDOW) {
-    return res.status(429).json({
-      status: 'TOO_MANY_REQUESTS',
-      message: '429 Too Many Requests: 분당 요청 한도(60회)를 초과했습니다. 잠시 후 다시 시도해주세요.'
-    });
-  }
-
-  clientStats.count += 1;
-  next();
-};
-
-const authenticateApiKey = (req, res, next) => {
-  const apiKey = req.headers['x-api-key'];
-  if (!apiKey) {
-    req.headers['x-api-key'] = 'seon_demo_pk_12345';
-    return next();
-  }
-  if (!VALID_API_KEYS.has(apiKey)) {
-    return res.status(401).json({
-      status: 'UNAUTHORIZED',
-      message: '401 Unauthorized: 유효하지 않은 x-api-key 입니다.'
-    });
-  }
-  next();
-};
-
-const TYPO_MAP = {
-  'doxycyclin': 'doxycycline',
-  'docycycline': 'doxycycline',
-  'enrofloxacine': 'enrofloxacin',
-  'clindamycine': 'clindamycin',
-  'fenbendazol': 'fenbendazole',
-  'praziquantell': 'praziquantel'
-};
-
-const MASTER_DRUG_RECORDS = {
-  doxycycline: { ndc_code: '00069-0960-01', ndc_11: '00069096001', proprietary_name: 'VIBRAMYCIN', nonproprietary_name: 'DOXYCYCLINE MONOHYDRATE', active_ingredients: [{ name: 'DOXYCYCLINE MONOHYDRATE', strength: '100 mg' }] },
-  enrofloxacin: { ndc_code: '81471-693-00', ndc_11: '81471069300', proprietary_name: 'BAYTRIL', nonproprietary_name: 'ENROFLOXACIN', active_ingredients: [{ name: 'ENROFLOXACIN', strength: '22.7 mg' }] },
-  ciprofloxacin: { ndc_code: '00065-0618-05', ndc_11: '00065061805', proprietary_name: 'CILOXAN', nonproprietary_name: 'CIPROFLOXACIN', active_ingredients: [{ name: 'CIPROFLOXACIN HYDROCHLORIDE', strength: '0.3%' }] },
-  gabapentin: { ndc_code: '00071-0801-01', ndc_11: '00071080101', proprietary_name: 'NEURONTIN', nonproprietary_name: 'GABAPENTIN', active_ingredients: [{ name: 'GABAPENTIN', strength: '100 mg' }] },
-  carprofen: { ndc_code: '00069-0520-01', ndc_11: '00069052001', proprietary_name: 'RIMADYL', nonproprietary_name: 'CARPROFEN', active_ingredients: [{ name: 'CARPROFEN', strength: '25 mg' }] },
-  furosemide: { ndc_code: '00010-3101-01', ndc_11: '00010310101', proprietary_name: 'SALIX / LASIX', nonproprietary_name: 'FUROSEMIDE', active_ingredients: [{ name: 'FUROSEMIDE', strength: '50 mg' }] },
-  // 실제 FDA 라벨(DailyMed / Boehringer Ingelheim 공식 PI) 기준 검증된 NDC예요. 라벨러 코드는 '0010'
-  // (Boehringer Ingelheim Animal Health USA Inc.), NADA 141-273. 4개 함량(1.25/2.5/5/10mg) 중
-  // 5mg 제품(0010-4482-01)을 대표값으로 등록해요. ndc_11 은 4-4-2 형식이라 라벨러 앞에 0을 채워
-  // 5자리로 맞춰요(00010 + 4482 + 01 = 00010448201).
-  pimobendan: { ndc_code: '0010-4482-01', ndc_11: '00010448201', proprietary_name: 'VETMEDIN', nonproprietary_name: 'PIMOBENDAN', active_ingredients: [{ name: 'PIMOBENDAN', strength: '5 mg' }], product_type: 'VETERINARY' },
-
-  // ---- 아래부터 이번 턴에 실제 DailyMed/제조사 라벨로 검증해 추가한 임상 필수 처방약이에요. ----
-  // product_type 표시 기준: 미국 FDA 가 실제로 "동물용(NADA)"으로 승인한 제품은 VETERINARY,
-  // 그런 제품이 없어 수의사가 사람용 제네릭을 초허가(off-label)로 처방하는 약물은 HUMAN 으로
-  // 정직하게 구분해요(예: benazepril·enalapril·metronidazole·tramadol 은 미국에 FDA 승인
-  // 동물용 완제품이 없어요 — 유럽 Fortekor/Enacard 는 EU/EMA 승인이라 미국 NDC가 없어요).
-
-  // PrednisTab(prednisolone tablets), Covetrus. NADA 없음(일반 처방 스테로이드, 개 전용).
-  // NDC 11695-4469-1(5mg), 5-4-1 형식 -> 11자리: 11695+4469+01 = 11695446901.
-  prednisolone: { ndc_code: '11695-4469-1', ndc_11: '11695446901', proprietary_name: 'PredniSTAB', nonproprietary_name: 'PREDNISOLONE', active_ingredients: [{ name: 'PREDNISOLONE', strength: '5 mg' }], product_type: 'VETERINARY' },
-
-  // METACAM(meloxicam oral suspension), Boehringer Ingelheim. NADA(개 전용 NSAID).
-  // NDC 0010-6015-01(1.5mg/mL), 4-4-2 -> 11자리: 00010+6015+01 = 00010601501.
-  meloxicam: { ndc_code: '0010-6015-01', ndc_11: '00010601501', proprietary_name: 'METACAM', nonproprietary_name: 'MELOXICAM', active_ingredients: [{ name: 'MELOXICAM', strength: '1.5 mg/mL' }], product_type: 'VETERINARY' },
-
-  // 사람용 제네릭(ANDA076820). 미국엔 FDA 승인 동물용 benazepril 제품이 없어요
-  // (EU의 FORTEKOR 은 EMA 승인이라 미국 NDC 없음 — 수의사가 사람용을 초허가로 처방).
-  // NDC 65162-751-03(5mg), 5-3-2 -> 11자리: 65162+0751+03 = 65162075103.
-  benazepril: { ndc_code: '65162-751-03', ndc_11: '65162075103', proprietary_name: 'Benazepril HCl (generic)', nonproprietary_name: 'BENAZEPRIL HYDROCHLORIDE', active_ingredients: [{ name: 'BENAZEPRIL HYDROCHLORIDE', strength: '5 mg' }], product_type: 'HUMAN' },
-
-  // 사람용 제네릭(ANDA075479). 미국 동물용 브랜드 ENACARD(NADA 141-015)가 있지만 정확한
-  // NDC 를 확인하지 못해, 검증된 사람용 제네릭으로 등록해요(둘 다 개 심부전에 쓰는 동일 성분).
-  // NDC 23155-704-01(5mg), 5-3-2 -> 11자리: 23155+0704+01 = 23155070401.
-  enalapril: { ndc_code: '23155-704-01', ndc_11: '23155070401', proprietary_name: 'Enalapril Maleate (generic) / ENACARD', nonproprietary_name: 'ENALAPRIL MALEATE', active_ingredients: [{ name: 'ENALAPRIL MALEATE', strength: '5 mg' }], product_type: 'HUMAN' },
-
-  // AMODIP(amlodipine besylate chewable), 고양이 전용이지만 개에도 초허가로 흔히 처방돼요. NADA.
-  // NDC 13744-815-01(1.25mg), 5-3-2 -> 11자리: 13744+0815+01 = 13744081501.
-  amlodipine: { ndc_code: '13744-815-01', ndc_11: '13744081501', proprietary_name: 'AMODIP', nonproprietary_name: 'AMLODIPINE BESYLATE', active_ingredients: [{ name: 'AMLODIPINE BESYLATE', strength: '1.25 mg' }], product_type: 'VETERINARY' },
-
-  // 사람용 제네릭(ANDA076003). Schedule IV 통제약물 — 미국에 FDA 승인 동물용 제품이 없어요.
-  // NDC 0591-0466-01(50mg), 4-4-2 -> 11자리: 00591+0466+01 = 00591046601.
-  tramadol: { ndc_code: '0591-0466-01', ndc_11: '00591046601', proprietary_name: 'Tramadol HCl (generic)', nonproprietary_name: 'TRAMADOL HYDROCHLORIDE', active_ingredients: [{ name: 'TRAMADOL HYDROCHLORIDE', strength: '50 mg' }], product_type: 'HUMAN' },
-
-  // CLAVAMOX CHEWABLE(amoxicillin/clavulanate potassium), Zoetis. NADA 055099.
-  // NDC 54771-1023-02(62.5mg 정: amoxicillin 50mg + clavulanic acid 12.5mg), 5-4-2(이미 11자리).
-  clavamox: { ndc_code: '54771-1023-02', ndc_11: '54771102302', proprietary_name: 'CLAVAMOX CHEWABLE', nonproprietary_name: 'AMOXICILLIN AND CLAVULANATE POTASSIUM', active_ingredients: [{ name: 'AMOXICILLIN', strength: '50 mg' }, { name: 'CLAVULANATE POTASSIUM', strength: '12.5 mg' }], product_type: 'VETERINARY' },
-
-  // 사람용 제네릭(ANDA079067). 미국에 FDA 승인 동물용 metronidazole 제품이 없어요.
-  // NDC 60687-526-01(250mg), 5-3-2 -> 11자리: 60687+0526+01 = 60687052601.
-  metronidazole: { ndc_code: '60687-526-01', ndc_11: '60687052601', proprietary_name: 'Metronidazole (generic) / FLAGYL', nonproprietary_name: 'METRONIDAZOLE', active_ingredients: [{ name: 'METRONIDAZOLE', strength: '250 mg' }], product_type: 'HUMAN' },
-
-  // CERENIA(maropitant citrate tablet), Zoetis. NADA 141262(개 전용 항구토제).
-  // NDC 54771-8181-1(24mg), 5-4-1 -> 11자리: 54771+8181+01 = 54771818101.
-  maropitant: { ndc_code: '54771-8181-1', ndc_11: '54771818101', proprietary_name: 'CERENIA', nonproprietary_name: 'MAROPITANT CITRATE', active_ingredients: [{ name: 'MAROPITANT CITRATE', strength: '24 mg' }], product_type: 'VETERINARY' },
-
-  // APOQUEL(oclacitinib maleate tablet), Zoetis. NADA 141345(개 전용 가려움증 치료제).
-  // NDC 54771-8722-3(5.4mg, 250정), 5-4-1 -> 11자리: 54771+8722+03 = 54771872203.
-  oclacitinib: { ndc_code: '54771-8722-3', ndc_11: '54771872203', proprietary_name: 'APOQUEL', nonproprietary_name: 'OCLACITINIB MALEATE', active_ingredients: [{ name: 'OCLACITINIB MALEATE', strength: '5.4 mg' }], product_type: 'VETERINARY' }
-};
-
-const ALIAS_GROUP_LIST = [
-  { masterKey: 'doxycycline', aliases: ['doxycycline', 'doxycyclin', 'vibramycin', 'doxy'] },
-  { masterKey: 'enrofloxacin', aliases: ['enrofloxacin', 'enrofloxacine', 'baytril', 'enroflox'] },
-  { masterKey: 'ciprofloxacin', aliases: ['ciprofloxacin', 'ciloxan', 'cipro'] },
-  { masterKey: 'gabapentin', aliases: ['gabapentin', 'neurontin'] },
-  { masterKey: 'carprofen', aliases: ['carprofen', 'rimadyl', 'carprovet'] },
-  { masterKey: 'furosemide', aliases: ['furosemide', 'salix', 'lasix'] },
-  { masterKey: 'pimobendan', aliases: ['pimobendan', 'vetmedin'] },
-  { masterKey: 'prednisolone', aliases: ['prednisolone', 'prednistab', 'pred'] },
-  { masterKey: 'meloxicam', aliases: ['meloxicam', 'metacam', 'loxicom', 'meloxidyl'] },
-  { masterKey: 'benazepril', aliases: ['benazepril', 'fortekor', 'lotensin'] },
-  { masterKey: 'enalapril', aliases: ['enalapril', 'enacard', 'vasotec', 'enalaprilmaleate'] },
-  { masterKey: 'amlodipine', aliases: ['amlodipine', 'amodip', 'norvasc', 'amlodipinebesylate'] },
-  { masterKey: 'tramadol', aliases: ['tramadol', 'ultram', 'tramadolhcl', 'tramadolhydrochloride'] },
-  { masterKey: 'clavamox', aliases: ['clavamox', 'amoxicillinclavulanate', 'amoxiclav', 'augmentin'] },
-  { masterKey: 'metronidazole', aliases: ['metronidazole', 'flagyl'] },
-  { masterKey: 'maropitant', aliases: ['maropitant', 'cerenia', 'maropitantcitrate'] },
-  { masterKey: 'oclacitinib', aliases: ['oclacitinib', 'apoquel', 'oclacitinibmaleate'] }
-];
-
-if (SUPABASE_URL && SUPABASE_KEY) {
-  supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
-  console.log('[seon] Supabase: connected');
-} else {
-  console.warn('[seon] Supabase credentials missing');
-}
-
-async function ensureDrugDictionaryLoaded() {
-  if (drugDictionaryCache.length > 0) return true;
-  if (!supabase) return false;
-
-  if (isCacheLoading) {
-    while (isCacheLoading) {
-      await new Promise(resolve => setTimeout(resolve, 100));
-    }
-    return drugDictionaryCache.length > 0;
-  }
-
-  isCacheLoading = true;
+// 약물-영양소 상극 체크 API
+app.post('/api/check-dni', async (req, res) => {
   try {
+    const { medications, supplements } = req.body;
+
+    // 입력값 기본 검증
+    if (!medications || !supplements) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'medications와 supplements 배열을 전달해야 합니다.' 
+      });
+    }
+
+    // PostgreSQL 배열 교집합 연산(cs: contains)을 이용한 DNI 규칙 조회
+    // (존재하지 않는 is_active 조건 삭제 완료)
     const { data, error } = await supabase
-      .from('fda_ndc_vet_dictionary')
+      .from('dni_rules')
       .select('*')
-      .range(0, 1999);
+      .filter('ingredient_keywords', 'cs', JSON.stringify(medications))
+      .filter('supplement_keywords', 'cs', JSON.stringify(supplements));
 
-    if (!error && data && data.length > 0) {
-      drugDictionaryCache = data;
-      console.log(`[seon] Dictionary FULLY loaded: ${drugDictionaryCache.length} items cached.`);
-    }
-  } catch (err) {
-    console.error("[seon] Cache exception:", err.message);
-  } finally {
-    isCacheLoading = false;
-  }
-
-  return drugDictionaryCache.length > 0;
-}
-
-function normalizeString(str) {
-  if (!str) return '';
-  return str.toLowerCase().replace(/[^a-z0-9]/g, '');
-}
-
-async function lookupDrugFromDb(drugInput) {
-  // [Fail-safe] 문자열이 아닌 입력(숫자·null·객체 등)이 들어와도 500으로 죽지 않도록 방어해요.
-  // (기존 코드는 !drugInput 만 걸러서, 숫자처럼 '참'인 비문자열 값은 .trim() 에서 그대로 터졌어요.)
-  if (typeof drugInput !== 'string' || !drugInput.trim()) return null;
-  let rawTerm = drugInput.trim();
-  const cleanInput = rawTerm.toLowerCase();
-
-  if (TYPO_MAP[cleanInput]) {
-    rawTerm = TYPO_MAP[cleanInput];
-  }
-
-  const normalizedTerm = normalizeString(rawTerm);
-  if (normalizedTerm.length < 3) return null;
-
-  const matchedGroup = ALIAS_GROUP_LIST.find(group => 
-    group.aliases.some(alias => normalizeString(alias) === normalizedTerm)
-  );
-
-  if (matchedGroup) {
-    const mapped = MASTER_DRUG_RECORDS[matchedGroup.masterKey];
-    if (mapped) {
-      return {
-        name: drugInput,
-        ndc_code: mapped.ndc_code,
-        ndc_11: mapped.ndc_11,
-        ndc_source: "openfda_db",
-        ndc_verified: true,
-        // [정밀도 보강] product_type 은 이제 항목별로 정확히 반영돼요. 진짜 FDA 승인 "동물용"
-        // 제품(NADA)은 VETERINARY, 사람용 제네릭을 수의사가 처방 시 초허가(off-label)로 쓰는
-        // 약물(예: benazepril·enalapril·metronidazole·tramadol 은 미국에 FDA 승인 동물용
-        // 제품이 없어요)은 HUMAN 으로 정직하게 구분해요. 이 필드가 없던 기존 6개 항목은
-        // 전부 VETERINARY 라서, 지정 안 하면 그대로 VETERINARY 로 동작해요(하위 호환).
-        product_type: mapped.product_type || "VETERINARY",
-        proprietary_name: mapped.proprietary_name,
-        active_ingredients: mapped.active_ingredients
-      };
-    }
-  }
-
-  return null;
-}
-
-async function evaluateDniConflictsFromDb(prescriptions, supplements) {
-  const conflicts = [];
-  if (!supabase) return conflicts;
-
-  try {
-    const { data: rules, error } = await supabase.from('dni_rules').select('*');
-    if (error || !rules) return conflicts;
-
-    for (const rx of prescriptions) {
-      const rxName = (rx.name || '').toUpperCase();
-      for (const supp of supplements) {
-        const suppName = (typeof supp === 'string' ? supp : supp.name || '').toUpperCase();
-
-        for (const rule of rules) {
-          const matchSupp = rule.supplement_keywords.some(k => suppName.includes(k));
-          if (!matchSupp) continue;
-
-          const matchIng = rule.ingredient_keywords.some(k => rxName.includes(k));
-
-          if (matchIng) {
-            conflicts.push({
-              drug_name: rx.name,
-              matched_ingredient: rx.name,
-              supplement_name: supp,
-              severity: rule.severity,
-              conflict_type: rule.conflict_type,
-              message: rule.message_ko,
-              recommended_action: rule.recommended_action
-            });
-          }
-        }
-      }
-    }
-  } catch (err) {
-    console.error("[seon] DNI Evaluation error:", err.message);
-  }
-
-  return conflicts;
-}
-
-// Supabase cyp450_chelation_rules 기반 간 & 신장 대사 부하 동적 연산 엔진
-async function calculateMetabolicStrainIndices(prescriptions, supplements) {
-  let hepaticRaw = 0;
-  let renalRaw = 0;
-
-  let cypRules = [];
-  if (supabase) {
-    try {
-      const { data } = await supabase.from('cyp450_chelation_rules').select('*');
-      if (data) cypRules = data;
-    } catch (e) {
-      console.warn("[seon] CYP rules load fail, fallback active");
-    }
-  }
-
-  for (const rx of prescriptions) {
-    const rxNameLower = (rx.name || '').toLowerCase();
-    const freq = rx.frequency_per_day || 1;
-
-    const dbRule = cypRules.find(r => 
-      rxNameLower.includes((r.drug_keyword || r.agent_a || '').toLowerCase())
-    );
-
-    if (dbRule && (dbRule.hepatic_weight !== null || dbRule.renal_weight !== null)) {
-      hepaticRaw += Number(dbRule.hepatic_weight || 0.4) * freq * 35;
-      renalRaw += Number(dbRule.renal_weight || 0.4) * freq * 35;
-    } else {
-      // Fallback
-      if (rxNameLower.includes('doxy') || rxNameLower.includes('cipro') || rxNameLower.includes('enro')) {
-        hepaticRaw += 0.40 * freq * 30;
-        renalRaw += 0.60 * freq * 30;
-      } else if (rxNameLower.includes('carprofen') || rxNameLower.includes('melo')) {
-        hepaticRaw += 0.65 * freq * 35;
-        renalRaw += 0.35 * freq * 35;
-      } else if (rxNameLower.includes('furo') || rxNameLower.includes('gaba')) {
-        hepaticRaw += 0.15 * freq * 35;
-        renalRaw += 0.80 * freq * 35;
-      } else {
-        hepaticRaw += 0.35 * freq * 30;
-        renalRaw += 0.35 * freq * 30;
-      }
-    }
-  }
-
-  for (const supp of supplements) {
-    const suppName = (typeof supp === 'string' ? supp : supp.name || '').toLowerCase();
-    if (suppName.includes('칼슘') || suppName.includes('calcium') || suppName.includes('미네랄')) {
-      renalRaw += 12;
-    } else {
-      hepaticRaw += 8;
-    }
-  }
-
-  const getStatus = (idx) => {
-    if (idx < 25) return "NORMAL";
-    if (idx < 60) return "MODERATE";
-    if (idx < 85) return "HIGH";
-    return "CRITICAL";
-  };
-
-  // [Fail-safe ①: 대사 부하 상한선 캡]
-  // 위험 등급(hepatic_status/renal_status)은 반드시 캡을 적용하기 '전'의 원본 연산값(음수만
-  // 0으로 방어) 기준으로 먼저 확정해요. 그래야 100을 훌쩍 넘는 극단적인 다약제 케이스도
-  // 등급이 낮잡아 표시되지 않아요. 화면/응답에 나가는 '수치'만 그다음에 0~100으로 제한해요.
-  const hepaticRawClamped = Math.max(0, Math.round(hepaticRaw));
-  const renalRawClamped = Math.max(0, Math.round(renalRaw));
-  const hepaticStatus = getStatus(hepaticRawClamped);
-  const renalStatus = getStatus(renalRawClamped);
-
-  const hepaticIndex = Math.min(100, hepaticRawClamped);
-  const renalIndex = Math.min(100, renalRawClamped);
-
-  return {
-    hepatic_strain_index: hepaticIndex,
-    hepatic_status: hepaticStatus,
-    renal_strain_index: renalIndex,
-    renal_status: renalStatus,
-    // [Fail-safe ②: 신규 필드명 하위 호환] renal_clearance_burden 은 renal_strain_index 와
-    // 완전히 동일한(캡 적용 후) 값으로 함께 반환해요 — 이 필드명을 참조하는 이전 프론트엔드도
-    // 그대로 동작해요.
-    renal_clearance_burden: renalIndex
-  };
-}
-
-app.get('/health', async (req, res) => {
-  await ensureDrugDictionaryLoaded();
-  res.json({ status: 'ok', cached_drugs: drugDictionaryCache.length, timestamp: new Date().toISOString() });
-});
-
-app.post('/v1/analyze', rateLimiter, authenticateApiKey, async (req, res) => {
-  try {
-    await ensureDrugDictionaryLoaded();
-
-    const { prescriptions = [], supplements = [] } = req.body;
-
-    // [Fail-safe ①: 미인식 약물 조기 차단] MASTER_DRUG_RECORDS/TYPO_MAP(이 파일이 실제로 약물을
-    // 식별하는 유일한 경로 — lookupDrugFromDb) 어디에서도 식별되지 않는 약물이 하나라도 있으면,
-    // 의미 없는 대사 부하 수치를 계산하지 않고 여기서 바로 422 로 응답해요.
-    // ⚠️ 참고: ensureDrugDictionaryLoaded() 가 Supabase 'fda_ndc_vet_dictionary' 테이블을
-    // drugDictionaryCache 에 캐싱하지만, lookupDrugFromDb() 는 이 캐시를 실제로 조회하지 않아요
-    // (원본 파일부터 그랬어요 — 이번 수정에서 새로 만든 문제가 아니에요). 그래서 이 422 판정은
-    // 사실상 MASTER_DRUG_RECORDS + TYPO_MAP 기준이고, Supabase 사전에만 있는 약물은 아직 여기서도
-    // 인식되지 않아요. 그 캐시를 실제로 연결하려면 fda_ndc_vet_dictionary 의 정확한 컬럼명(성분명이
-    // 어느 컬럼에 들어있는지)을 알려주세요 — 추측으로 잘못 연결하고 싶지 않아서 남겨뒀어요.
-    for (const item of prescriptions) {
-      const drugName = typeof item === 'string' ? item : (item && typeof item === 'object' ? item.name : undefined);
-      const dbResult = await lookupDrugFromDb(drugName);
-      if (!dbResult) {
-        return res.status(422).json({ error: 'UNKNOWN_DRUG', unknown_drug: drugName ?? null });
-      }
+    if (error) {
+      console.error('Supabase Query Error:', error);
+      throw error;
     }
 
-    const analyzedPrescriptions = await Promise.all(
-      prescriptions.map(async (item) => {
-        const drugName = typeof item === 'string' ? item : item.name;
-        const frequency = item.frequency_per_day || 1;
-
-        const dbResult = await lookupDrugFromDb(drugName);
-        if (dbResult) {
-          return {
-            ...dbResult,
-            frequency_per_day: frequency
-          };
-        }
-
-        return {
-          name: drugName,
-          ndc_code: null,
-          ndc_11: null,
-          ndc_source: "manual",
-          ndc_verified: false,
-          product_type: "UNKNOWN",
-          proprietary_name: drugName,
-          frequency_per_day: frequency,
-          active_ingredients: [{ name: drugName, strength: '' }]
-        };
-      })
-    );
-
-    const conflicts = await evaluateDniConflictsFromDb(analyzedPrescriptions, supplements);
-    const conflictDetected = conflicts.length > 0;
-    const hasHigh = conflicts.some(c => c.severity === 'HIGH' || c.severity === 'high');
-
-    const strainMetrics = await calculateMetabolicStrainIndices(analyzedPrescriptions, supplements);
-
-    let recommendedSchedule = "제약 없음 — 평소 급여 스케줄을 유지하세요.";
-    if (conflictDetected) {
-      recommendedSchedule = hasHigh
-        ? "⚠️ 심각한 상호작용 감지: 약물과 영양제 복용 간격을 최소 2시간 이상 유지하거나 수의사 상담이 필요합니다."
-        : "⚡ 주의 상호작용 감지: 동시 복용 시 관찰이 필요합니다.";
-    }
-
-    const payload = {
-      status: "SUCCESS",
-      dni_conflict_detected: conflictDetected,
-      has_conflict: conflictDetected,
-      conflicts_count: conflicts.length,
-      conflicts: conflicts,
-      recommended_schedule: recommendedSchedule,
-      isolation_hours: conflictDetected ? (hasHigh ? 4 : 2) : 0,
-      
-      // 간 & 신장 동적 연산 수치 (모두 0~100 캡 적용, 등급은 원본 지수 기준으로 확정됨)
-      hepatic_strain_index: strainMetrics.hepatic_strain_index,
-      hepatic_status: strainMetrics.hepatic_status,
-      renal_strain_index: strainMetrics.renal_strain_index,
-      renal_status: strainMetrics.renal_status,
-      renal_clearance_burden: strainMetrics.renal_clearance_burden, // renal_strain_index 와 동일 값(하위 호환용 별칭)
-
-      prescriptions: analyzedPrescriptions,
-      supplements: supplements
-    };
-
-    return res.json({
-      ...payload,
-      data: payload
+    res.json({
+      success: true,
+      conflicts: data || []
     });
-
-  } catch (error) {
-    console.error("[seon] Analyze error:", error);
-    return res.status(500).json({ status: "ERROR", message: error.message });
+  } catch (err) {
+    console.error('Server Error:', err.message);
+    res.status(500).json({ success: false, message: '서버 에러가 발생했습니다.' });
   }
 });
 
-app.listen(PORT, async () => {
-  console.log(`[seon] Strict Token Isolation Engine Active | Server running on port ${PORT}`);
-  await ensureDrugDictionaryLoaded();
+app.listen(PORT, () => {
+  console.log(`Server is running on http://localhost:${PORT}`);
 });
