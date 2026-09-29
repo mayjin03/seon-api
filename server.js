@@ -186,6 +186,7 @@ async function lookupDrugFromDb(drugInput) {
   return null;
 }
 
+// 영양제 이름 분해 파싱 보완한 DNI 평가 함수
 async function evaluateDniConflictsFromDb(prescriptions, supplements) {
   const conflicts = [];
   if (!supabase) return conflicts;
@@ -194,10 +195,16 @@ async function evaluateDniConflictsFromDb(prescriptions, supplements) {
     const { data: rules, error } = await supabase.from('dni_rules').select('*');
     if (error || !rules) return conflicts;
 
+    // supplements 가 단일 문자열/객체로 넘어올 때도 안전하게 배열화
+    const suppList = Array.isArray(supplements) ? supplements : [supplements];
+
     for (const rx of prescriptions) {
       const rxName = (rx.name || '').toLowerCase();
-      for (const supp of supplements) {
-        const suppName = (typeof supp === 'string' ? supp : supp.name || '').toLowerCase();
+      
+      for (const supp of suppList) {
+        if (!supp) continue;
+        const rawSuppName = typeof supp === 'string' ? supp : (supp.name || supp.supplement_name || '');
+        const suppName = rawSuppName.toLowerCase();
 
         for (const rule of rules) {
           const matchSupp = (rule.supplement_keywords || []).some(k => {
@@ -215,7 +222,7 @@ async function evaluateDniConflictsFromDb(prescriptions, supplements) {
             conflicts.push({
               drug_name: rx.name,
               matched_ingredient: rx.name,
-              supplement_name: typeof supp === 'string' ? supp : supp.name,
+              supplement_name: rawSuppName, // 쪼개짐 없이 원본 영양제 이름 유지
               severity: rule.severity,
               conflict_type: rule.conflict_type,
               message: rule.message_ko,
@@ -274,7 +281,8 @@ async function calculateMetabolicStrainIndices(prescriptions, supplements) {
     }
   }
 
-  for (const supp of supplements) {
+  const suppList = Array.isArray(supplements) ? supplements : [supplements];
+  for (const supp of suppList) {
     const suppName = (typeof supp === 'string' ? supp : supp.name || '').toLowerCase();
     if (suppName.includes('칼슘') || suppName.includes('calcium') || suppName.includes('미네랄')) {
       renalRaw += 12;
