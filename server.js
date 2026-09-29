@@ -1,7 +1,13 @@
-const express = require('express');
-const path = require('path');
-const { createClient } = require('@supabase/supabase-js');
-require('dotenv').config();
+import express from 'express';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import { createClient } from '@supabase/supabase-js';
+import dotenv from 'dotenv';
+
+dotenv.config();
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -9,7 +15,7 @@ const PORT = process.env.PORT || 3000;
 // Request Body JSON 파싱
 app.use(express.json());
 
-// public 폴더 안의 정적 파일(index.html, css, js 등) 제공
+// public 폴더 내 정적 파일 제공
 app.use(express.static(path.join(__dirname, 'public')));
 
 // Supabase 클라이언트 생성
@@ -18,7 +24,7 @@ const supabase = createClient(
   process.env.SUPABASE_ANON_KEY
 );
 
-// 루트 경로 접속 시 public/index.html 파일 전달
+// 루트 경로 접속 시 public/index.html 전달
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
@@ -28,7 +34,6 @@ app.post('/api/check-dni', async (req, res) => {
   try {
     const { medications, supplements } = req.body;
 
-    // 입력값 기본 검증
     if (!medications || !supplements) {
       return res.status(400).json({ 
         success: false, 
@@ -36,8 +41,7 @@ app.post('/api/check-dni', async (req, res) => {
       });
     }
 
-    // PostgreSQL 배열 교집합 연산(cs: contains)을 이용한 DNI 규칙 조회
-    // (존재하지 않는 is_active 조건 삭제 완료)
+    // PostgreSQL 배열 교집합 연산(cs: contains)으로 DNI 규칙 조회
     const { data, error } = await supabase
       .from('dni_rules')
       .select('*')
@@ -60,5 +64,5 @@ app.post('/api/check-dni', async (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`Server is running on http://localhost:${PORT}`);
+  console.log(`Server is running on port ${PORT}`);
 });
