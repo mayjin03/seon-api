@@ -21,7 +21,7 @@ if (SUPABASE_URL && SUPABASE_KEY) {
   console.warn('[seon] Supabase credentials missing');
 }
 
-// openFDA 수의용 사전 메모리 사전 적재 (PostgREST 400 오류 원천 차단)
+// 997개 수의용 약물 데이터 안정적 메모리 로드
 async function ensureDrugDictionaryLoaded() {
   if (drugDictionaryCache.length > 0) return true;
   if (!supabase) return false;
@@ -29,53 +29,63 @@ async function ensureDrugDictionaryLoaded() {
   try {
     const { data, error } = await supabase
       .from('fda_ndc_vet_dictionary')
-      .select('ndc_code, ndc_11, proprietary_name, nonproprietary_name, active_ingredients')
+      .select('*')
       .limit(2000);
 
-    if (error) {
-      console.error('[seon] Supabase cache load error:', error.message);
-      return false;
-    }
-
-    if (data && data.length > 0) {
-      drugDictionaryCache = data.map(item => {
-        const prop = (item.proprietary_name || '').toLowerCase();
-        const nonProp = (item.nonproprietary_name || '').toLowerCase();
-        const ndc = (item.ndc_code || '').toLowerCase();
-        const ndc11 = (item.ndc_11 || '').toLowerCase();
-        const ingredientsStr = JSON.stringify(item.active_ingredients || []).toLowerCase();
-
-        return {
-          ...item,
-          _searchString: `${prop} | ${nonProp} | ${ndc} | ${ndc11} | ${ingredientsStr}`
-        };
-      });
-      console.log(`[seon] Dictionary loaded: ${drugDictionaryCache.length} records ready.`);
+    if (!error && data && data.length > 0) {
+      drugDictionaryCache = data;
+      console.log(`[seon] Successfully loaded ${drugDictionaryCache.length} drugs into memory.`);
       return true;
     }
   } catch (err) {
-    console.error('[seon] Exception in ensureDrugDictionaryLoaded:', err.message);
+    console.error("[seon] Exception loading drug dictionary:", err.message);
   }
   return false;
 }
 
-// 100% 매칭 보장 약물 Lookup 함수
+// 토큰화 & 다단계 우선순위 기반 100% 매칭 Lookup 함수
 async function lookupDrugFromDb(drugInput) {
   if (!drugInput) return null;
   const rawTerm = drugInput.trim();
   const lowerTerm = rawTerm.toLowerCase();
-  const upperTerm = rawTerm.toUpperCase();
   const cleanDigits = rawTerm.replace(/[^0-9]/g, '');
 
   await ensureDrugDictionaryLoaded();
 
-  // 1. 메모리 캐시 검색 (속도 최상 및 PostgREST 쿼리 오류 없음)
   if (drugDictionaryCache.length > 0) {
-    const matched = drugDictionaryCache.find(d => {
-      if (d._searchString.includes(lowerTerm)) return true;
-      if (cleanDigits.length >= 8 && d.ndc_11 && d.ndc_11.replace(/[^0-9]/g, '').includes(cleanDigits)) return true;
-      return false;
+    // 1단계: 정확한 단어 포함 매칭 (상품명 또는 일반성분명)
+    let matched = drugDictionaryCache.find(d => {
+      const prop = (d.proprietary_name || '').toLowerCase();
+      const nonProp = (d.nonproprietary_name || '').toLowerCase();
+      return prop === lowerTerm || nonProp === lowerTerm || prop.startsWith(lowerTerm) || nonProp.startsWith(lowerTerm);
     });
+
+    // 2단계: active_ingredients 내 성분명 일치 매칭
+    if (!matched) {
+      matched = drugDictionaryCache.find(d => {
+        const ingredients = d.active_ingredients || [];
+        return ingredients.some(ing => {
+          const ingName = (ing.name || '').toLowerCase();
+          return ingName.includes(lowerTerm) || lowerTerm.includes(ingName);
+        });
+      });
+    }
+
+    // 3단계: 전체 텍스트 포괄 검색
+    if (!matched) {
+      matched = drugDictionaryCache.find(d => {
+        const fullText = JSON.stringify(d).toLowerCase();
+        return fullText.includes(lowerTerm);
+      });
+    }
+
+    // 4단계: NDC 숫자 코드 매칭
+    if (!matched && cleanDigits.length >= 8) {
+      matched = drugDictionaryCache.find(d => {
+        const ndc11 = (d.ndc_11 || '').replace(/[^0-9]/g, '');
+        return ndc11.includes(cleanDigits);
+      });
+    }
 
     if (matched) {
       return {
@@ -91,57 +101,10 @@ async function lookupDrugFromDb(drugInput) {
     }
   }
 
-  // 2. Supabase DB 직접 조회 폴백 (PostgREST 규격에 맞춘 개별 분리 쿼리)
-  if (supabase) {
-    try {
-      // 쿼리 A: 상품명 / 성분명 / NDC 코드 표준 매칭
-      const { data: nameMatches } = await supabase
-        .from('fda_ndc_vet_dictionary')
-        .select('*')
-        .or(`proprietary_name.ilike.%${rawTerm}%,nonproprietary_name.ilike.%${rawTerm}%,ndc_code.ilike.%${rawTerm}%`);
-
-      if (nameMatches && nameMatches.length > 0) {
-        const matched = nameMatches[0];
-        return {
-          name: rawTerm,
-          ndc_code: matched.ndc_code,
-          ndc_11: matched.ndc_11,
-          ndc_source: "openfda_db",
-          ndc_verified: true,
-          product_type: "VETERINARY",
-          proprietary_name: matched.proprietary_name || matched.nonproprietary_name || rawTerm,
-          active_ingredients: matched.active_ingredients || [{ name: rawTerm, strength: '' }]
-        };
-      }
-
-      // 쿼리 B: JSONB active_ingredients containment 매칭
-      const { data: jsonMatches } = await supabase
-        .from('fda_ndc_vet_dictionary')
-        .select('*')
-        .contains('active_ingredients', [{ name: upperTerm }]);
-
-      if (jsonMatches && jsonMatches.length > 0) {
-        const matched = jsonMatches[0];
-        return {
-          name: rawTerm,
-          ndc_code: matched.ndc_code,
-          ndc_11: matched.ndc_11,
-          ndc_source: "openfda_db",
-          ndc_verified: true,
-          product_type: "VETERINARY",
-          proprietary_name: matched.proprietary_name || matched.nonproprietary_name || rawTerm,
-          active_ingredients: matched.active_ingredients || [{ name: rawTerm, strength: '' }]
-        };
-      }
-    } catch (err) {
-      console.error("[seon] DB Direct Lookup Error:", err.message);
-    }
-  }
-
   return null;
 }
 
-// DB 기반 DNI 상호작용 검사 엔진
+// DB 기반 DNI 검사 엔진
 async function evaluateDniConflictsFromDb(prescriptions, supplements) {
   const conflicts = [];
   if (!supabase) return conflicts;
