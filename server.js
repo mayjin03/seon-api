@@ -266,9 +266,6 @@ async function calculateMetabolicStrainIndices(prescriptions, supplements) {
     }
   }
 
-  const hepaticIndex = Math.min(100, Math.max(0, Math.round(hepaticRaw)));
-  const renalIndex = Math.min(100, Math.max(0, Math.round(renalRaw)));
-
   const getStatus = (idx) => {
     if (idx < 25) return "NORMAL";
     if (idx < 60) return "MODERATE";
@@ -276,11 +273,27 @@ async function calculateMetabolicStrainIndices(prescriptions, supplements) {
     return "CRITICAL";
   };
 
+  // [Fail-safe ①: 대사 부하 상한선 캡]
+  // 위험 등급(hepatic_status/renal_status)은 반드시 캡을 적용하기 '전'의 원본 연산값(음수만
+  // 0으로 방어) 기준으로 먼저 확정해요. 그래야 100을 훌쩍 넘는 극단적인 다약제 케이스도
+  // 등급이 낮잡아 표시되지 않아요. 화면/응답에 나가는 '수치'만 그다음에 0~100으로 제한해요.
+  const hepaticRawClamped = Math.max(0, Math.round(hepaticRaw));
+  const renalRawClamped = Math.max(0, Math.round(renalRaw));
+  const hepaticStatus = getStatus(hepaticRawClamped);
+  const renalStatus = getStatus(renalRawClamped);
+
+  const hepaticIndex = Math.min(100, hepaticRawClamped);
+  const renalIndex = Math.min(100, renalRawClamped);
+
   return {
     hepatic_strain_index: hepaticIndex,
-    hepatic_status: getStatus(hepaticIndex),
+    hepatic_status: hepaticStatus,
     renal_strain_index: renalIndex,
-    renal_status: getStatus(renalIndex)
+    renal_status: renalStatus,
+    // [Fail-safe ②: 신규 필드명 하위 호환] renal_clearance_burden 은 renal_strain_index 와
+    // 완전히 동일한(캡 적용 후) 값으로 함께 반환해요 — 이 필드명을 참조하는 이전 프론트엔드도
+    // 그대로 동작해요.
+    renal_clearance_burden: renalIndex
   };
 }
 
@@ -344,11 +357,12 @@ app.post('/v1/analyze', rateLimiter, authenticateApiKey, async (req, res) => {
       recommended_schedule: recommendedSchedule,
       isolation_hours: conflictDetected ? (hasHigh ? 4 : 2) : 0,
       
-      // 간 & 신장 동적 연산 수치
+      // 간 & 신장 동적 연산 수치 (모두 0~100 캡 적용, 등급은 원본 지수 기준으로 확정됨)
       hepatic_strain_index: strainMetrics.hepatic_strain_index,
       hepatic_status: strainMetrics.hepatic_status,
       renal_strain_index: strainMetrics.renal_strain_index,
       renal_status: strainMetrics.renal_status,
+      renal_clearance_burden: strainMetrics.renal_clearance_burden, // renal_strain_index 와 동일 값(하위 호환용 별칭)
 
       prescriptions: analyzedPrescriptions,
       supplements: supplements
