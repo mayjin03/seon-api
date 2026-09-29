@@ -83,7 +83,12 @@ const MASTER_DRUG_RECORDS = {
   ciprofloxacin: { ndc_code: '00065-0618-05', ndc_11: '00065061805', proprietary_name: 'CILOXAN', nonproprietary_name: 'CIPROFLOXACIN', active_ingredients: [{ name: 'CIPROFLOXACIN HYDROCHLORIDE', strength: '0.3%' }] },
   gabapentin: { ndc_code: '00071-0801-01', ndc_11: '00071080101', proprietary_name: 'NEURONTIN', nonproprietary_name: 'GABAPENTIN', active_ingredients: [{ name: 'GABAPENTIN', strength: '100 mg' }] },
   carprofen: { ndc_code: '00069-0520-01', ndc_11: '00069052001', proprietary_name: 'RIMADYL', nonproprietary_name: 'CARPROFEN', active_ingredients: [{ name: 'CARPROFEN', strength: '25 mg' }] },
-  furosemide: { ndc_code: '00010-3101-01', ndc_11: '00010310101', proprietary_name: 'SALIX / LASIX', nonproprietary_name: 'FUROSEMIDE', active_ingredients: [{ name: 'FUROSEMIDE', strength: '50 mg' }] }
+  furosemide: { ndc_code: '00010-3101-01', ndc_11: '00010310101', proprietary_name: 'SALIX / LASIX', nonproprietary_name: 'FUROSEMIDE', active_ingredients: [{ name: 'FUROSEMIDE', strength: '50 mg' }] },
+  // 실제 FDA 라벨(DailyMed / Boehringer Ingelheim 공식 PI) 기준 검증된 NDC예요. 라벨러 코드는 '0010'
+  // (Boehringer Ingelheim Animal Health USA Inc.), NADA 141-273. 4개 함량(1.25/2.5/5/10mg) 중
+  // 5mg 제품(0010-4482-01)을 대표값으로 등록해요. ndc_11 은 4-4-2 형식이라 라벨러 앞에 0을 채워
+  // 5자리로 맞춰요(00010 + 4482 + 01 = 00010448201).
+  pimobendan: { ndc_code: '0010-4482-01', ndc_11: '00010448201', proprietary_name: 'VETMEDIN', nonproprietary_name: 'PIMOBENDAN', active_ingredients: [{ name: 'PIMOBENDAN', strength: '5 mg' }] }
 };
 
 const ALIAS_GROUP_LIST = [
@@ -92,7 +97,8 @@ const ALIAS_GROUP_LIST = [
   { masterKey: 'ciprofloxacin', aliases: ['ciprofloxacin', 'ciloxan', 'cipro'] },
   { masterKey: 'gabapentin', aliases: ['gabapentin', 'neurontin'] },
   { masterKey: 'carprofen', aliases: ['carprofen', 'rimadyl', 'carprovet'] },
-  { masterKey: 'furosemide', aliases: ['furosemide', 'salix', 'lasix'] }
+  { masterKey: 'furosemide', aliases: ['furosemide', 'salix', 'lasix'] },
+  { masterKey: 'pimobendan', aliases: ['pimobendan', 'vetmedin'] }
 ];
 
 if (SUPABASE_URL && SUPABASE_KEY) {
