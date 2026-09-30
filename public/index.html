@@ -11349,15 +11349,22 @@ function sbxRenderResult(result, view){
   else text = `${result.http} ${SBX_HTTP_TEXT[result.http] || ''} | ${result.ms}ms round-trip` + (result.body.latency_ms != null ? ` (server compute ${result.body.latency_ms}ms)` : '');
   document.getElementById('sbxStatusText').textContent = text;
   document.getElementById('sbxStatusDot').style.color = ok ? '#4ADE80' : '#F87171';
-  try{ 
-    const resBody = result.body || result;
-    const h = resBody.hepatic_strain_index || (resBody.data && resBody.data.hepatic_strain_index) || 0;
-    const k = resBody.renal_strain_index || (resBody.data && resBody.data.renal_strain_index) || 0;
-    if (resBody.health_score === undefined && (resBody.data ? resBody.data.health_score === undefined : true)) {
-      resBody.health_score = Math.max(0, 100 - (h + k));
-      if (resBody.data) resBody.data.health_score = resBody.health_score;
-    }
-    renderSbxWidget(result, view); 
+  try{
+    // 1. 객체 내 최적의 간/신장 지수 탐색
+    const getVal = (key) => {
+      return result[key] ?? result.body?.[key] ?? result.data?.[key] ?? result.body?.data?.[key] ?? 0;
+    };
+    const h = getVal('hepatic_strain_index');
+    const k = getVal('renal_strain_index');
+    const calcScore = Math.max(0, 100 - (h + k));
+
+    // 2. renderSbxWidget이 참조할 수 있는 모든 위치에 health_score 강제 주입
+    result.health_score = calcScore;
+    if (result.body && typeof result.body === 'object') result.body.health_score = calcScore;
+    if (result.data && typeof result.data === 'object') result.data.health_score = calcScore;
+    if (result.body?.data && typeof result.body.data === 'object') result.body.data.health_score = calcScore;
+
+    renderSbxWidget(result, view);
   }
   catch(e){ // 서버 버전이 어긋나 예상 필드가 없어도 RAW JSON은 그대로 보여줘요.
     document.getElementById('sbxWidgetPreview').innerHTML = '<p class="text-xs" style="color:#475569;">응답 형식이 예상과 달라 위젯을 그릴 수 없어요. 우측 RAW JSON 패널을 확인해주세요.</p>';
