@@ -11376,15 +11376,21 @@ async function sbxSendCurrent(){
   finally{ sbxSetBusy(false); }
   sbxResults[view] = result;
   sbxRenderCurrentView(); // 응답을 보내는 동안 뷰를 바꿨다면, 지금 보고 있는 뷰의 결과를 그려요.
-  // health_score가 없어서 undefined가 뜨는 현상 방지 예외 처리
+  // undefined 문구 강제 치환 및 점수 예외 처리 (수정)
     if (result && typeof result === 'object') {
       const h = result.hepatic_strain_index || (result.data && result.data.hepatic_strain_index) || 0;
       const r = result.renal_strain_index || (result.data && result.data.renal_strain_index) || 0;
-      if (result.health_score === undefined && (result.data ? result.data.health_score === undefined : true)) {
-        const fallbackScore = Math.max(0, 100 - (h + r));
-        const scoreEls = document.querySelectorAll('#sandboxPlayground .text-red-500, .sbx-score-val, #sbxHealthScore');
-        scoreEls.forEach(el => { el.innerText = fallbackScore; });
-      }
+      const fallbackScore = Math.max(0, 100 - (h + r));
+
+      // DOM 업데이트 지연 처리 및 텍스트 강제 업데이트
+      setTimeout(() => {
+        const scoreNodes = Array.from(document.querySelectorAll('#sandboxPlayground *')).filter(
+          el => el.children.length === 0 && (el.innerText.trim() === 'undefined' || el.innerText.includes('undefined'))
+        );
+        scoreNodes.forEach(el => {
+          el.innerText = fallbackScore;
+        });
+      }, 50);
     }
 }
 
