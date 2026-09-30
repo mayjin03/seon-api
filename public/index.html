@@ -11273,7 +11273,7 @@ function sbxApplyToForm(req){
   } finally { sbxSyncLock = false; }
 }
 /* --- 실제 백엔드 API 호출 (배포된 SEON API 서버) --- */
-const SEON_API_BASE = 'https://seon-api-orb2.onrender.com';
+const SEON_API_BASE = 'https://cautious-halibut-r76rpxgwrgq636w-10000.app.github.dev';
 const SEON_API_ANALYZE_URL = SEON_API_BASE + '/v1/analyze';
 const SBX_TIMEOUT_MS = 60000; // 유휴 상태였던 서버의 첫 요청(cold start)은 수십 초 걸릴 수 있어요.
 const SBX_HTTP_TEXT = { 200:'OK', 400:'Bad Request', 401:'Unauthorized', 404:'Not Found', 405:'Method Not Allowed', 413:'Payload Too Large', 415:'Unsupported Media Type', 422:'Unprocessable Entity', 429:'Too Many Requests', 500:'Server Error', 502:'Bad Gateway', 503:'Service Unavailable', 504:'Gateway Timeout' };
