@@ -11349,7 +11349,16 @@ function sbxRenderResult(result, view){
   else text = `${result.http} ${SBX_HTTP_TEXT[result.http] || ''} | ${result.ms}ms round-trip` + (result.body.latency_ms != null ? ` (server compute ${result.body.latency_ms}ms)` : '');
   document.getElementById('sbxStatusText').textContent = text;
   document.getElementById('sbxStatusDot').style.color = ok ? '#4ADE80' : '#F87171';
-  try{ renderSbxWidget(result, view); }
+  try{ 
+    const resBody = result.body || result;
+    const h = resBody.hepatic_strain_index || (resBody.data && resBody.data.hepatic_strain_index) || 0;
+    const k = resBody.renal_strain_index || (resBody.data && resBody.data.renal_strain_index) || 0;
+    if (resBody.health_score === undefined && (resBody.data ? resBody.data.health_score === undefined : true)) {
+      resBody.health_score = Math.max(0, 100 - (h + k));
+      if (resBody.data) resBody.data.health_score = resBody.health_score;
+    }
+    renderSbxWidget(result, view); 
+  }
   catch(e){ // 서버 버전이 어긋나 예상 필드가 없어도 RAW JSON은 그대로 보여줘요.
     document.getElementById('sbxWidgetPreview').innerHTML = '<p class="text-xs" style="color:#475569;">응답 형식이 예상과 달라 위젯을 그릴 수 없어요. 우측 RAW JSON 패널을 확인해주세요.</p>';
   }
