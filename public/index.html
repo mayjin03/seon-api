@@ -11150,7 +11150,7 @@ function renderSbxWidget(result, view){
     const c = b.health_light === 'green' ? '#059669' : b.health_light === 'yellow' ? '#D97706' : '#DC2626';
     wrap.innerHTML = `<div class="rounded-xl p-4" style="background:#fff; border:1.5px solid ${c}55;">
       <div class="flex items-center gap-2 mb-3"><span class="text-[10px] font-bold px-2 py-1 rounded-full" style="background:#0F172A; color:#34D399;">🧬 SEON Health Score</span></div>
-      <div class="flex items-center gap-4"><p class="font-display font-bold" style="font-size:2.4rem; color:${c};">${b.health_score}</p>
+      <div class="flex items-center gap-4"><p class="font-display font-bold" style="font-size:2.4rem; color:${c};">${b.health_score ?? 100}</p>
       <div><p class="text-xs font-bold" style="color:#0F172A;">${sbxEsc(SBX_LIGHT_LABEL[b.health_light] || '평가 완료')}</p><p class="text-[11px]" style="color:#64748B;">목표 기반 종합 건강 스코어 (0–100)</p></div></div></div>`;
     return;
   }
@@ -11386,6 +11386,8 @@ function sbxRenderResult(result, view){
     if (typeof result.body === 'object' && result.body) result.body.health_score = computedScore;
 
     renderSbxWidget(result, view);
+  } catch (e) {
+    document.getElementById('sbxWidgetPreview').innerHTML = '<p class="text-xs" style="color:#475569;">응답 형식이 예상과 달라 위젯을 그릴 수 없어요.</p>';
   }
 }
 function sbxRenderCurrentView(){
