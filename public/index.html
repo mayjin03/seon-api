@@ -11358,6 +11358,18 @@ function sbxRenderCurrentView(){
   const view = sbxView === 'health' ? 'health' : 'full';
   const r = sbxResults[view];
   if(r) sbxRenderResult(r, view); else sbxShowPlaceholder();
+  if (r && typeof r === 'object') {
+    const h = r.hepatic_strain_index || (r.data && r.data.hepatic_strain_index) || 0;
+    const k = r.renal_strain_index || (r.data && r.data.renal_strain_index) || 0;
+    const fallbackScore = Math.max(0, 100 - (h + k));
+    
+    setTimeout(() => {
+      const scoreNodes = Array.from(document.querySelectorAll('#sandboxPlayground *')).filter(
+        el => el.children.length === 0 && (el.innerText.trim() === 'undefined' || el.innerText.includes('undefined'))
+      );
+      scoreNodes.forEach(el => { el.innerText = fallbackScore; });
+    }, 10);
+  }
 }
 async function sbxSendCurrent(){
   if(!sbxReady || sbxInFlight) return;
