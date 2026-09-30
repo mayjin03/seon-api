@@ -11146,7 +11146,7 @@ function renderSbxWidget(result, view){
       <p class="text-[11px] mt-1" style="color:#64748B;">서버가 응답 자체는 정상(200 OK)으로 보냈지만, 이 처방약이 식별되지 않아 대사 부하·상호작용 수치는 신뢰할 수 없어 표시하지 않아요.</p></div>`;
     return;
   }
-  if(view === 'health'){
+  if(view === 'health' || view === 'goal' || view === 'goal_health' || !view){
     const h = b.hepatic_strain_index ?? b.data?.hepatic_strain_index ?? 0;
     const k = b.renal_strain_index ?? b.data?.renal_strain_index ?? 0;
     const computedScore = Math.max(0, 100 - (h + k));
