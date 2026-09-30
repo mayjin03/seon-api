@@ -11365,10 +11365,10 @@ function sbxRenderCurrentView(){
 
     // LIVE WIDGET PREVIEW 영역을 포함한 전체 문서에서 undefined 텍스트 치환
     const fixUndefined = () => {
-      const allElements = document.querySelectorAll('div, span, p, h1, h2, h3, b, strong');
+      const allElements = document.querySelectorAll('*');
       allElements.forEach(el => {
-        if (el.children.length === 0 && el.innerText && el.innerText.trim() === 'undefined') {
-          el.innerText = fallbackScore;
+        if (el.children.length === 0 && el.textContent && el.textContent.includes('undefined')) {
+          el.textContent = fallbackScore;
         }
       });
     };
