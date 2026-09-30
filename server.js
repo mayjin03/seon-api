@@ -234,7 +234,95 @@ async function lookupDrugSingleTerm(drugInput) {
   const dbResult = await lookupDrugFromSupabaseDictionary(rawTerm.trim() || drugInput.trim());
   if (dbResult) return dbResult;
 
+  // [신규 - openFDA Auto-seeding] DB에도 없으면 openFDA 를 실시간으로 조회하고, 찾으면
+  // fda_ndc_vet_dictionary 에 자동으로 저장(auto-seed)해서 다음부터는 DB 조회만으로 바로
+  // 인식되게 해요. (⚠️ animalandveterinary/ndc.json 은 openFDA 에 실제로 존재하지 않는
+  // 엔드포인트예요 — "Animal & Veterinary" 카테고리엔 event(부작용 보고) 하나뿐이라, 대신
+  // 검증된 실제 엔드포인트인 drug/ndc.json 을 써요. 이 엔드포인트는 동물용 약을 포함하지
+  // 않는다고 openFDA 공식 문서에 명시돼 있어서, 여기서 찾은 결과는 product_type: "HUMAN"
+  // 으로 정직하게 표시해요 — 실제 동물용 승인 여부와 혼동되지 않도록요.)
+  const fdaResult = await lookupDrugFromOpenFdaAndSeed(rawTerm.trim() || drugInput.trim());
+  if (fdaResult) return fdaResult;
+
   return null;
+}
+
+const OPENFDA_NDC_URL = 'https://api.fda.gov/drug/ndc.json';
+async function lookupDrugFromOpenFdaAndSeed(drugInput) {
+  const term = typeof drugInput === 'string' ? drugInput.trim() : '';
+  if (term.length < 3) return null;
+
+  // openFDA 쿼리 문법: search=field:term+field:term 은 '+'(공백)로 이어지면 OR(둘 중 하나라도
+  // 매칭)이에요(공식 문서 https://open.fda.gov/apis/query-syntax/ 기준. +AND+ 를 써야 AND예요).
+  const q = `brand_name:"${term}" generic_name:"${term}"`;
+  const url = `${OPENFDA_NDC_URL}?search=${encodeURIComponent(q)}&limit=1`;
+
+  let json;
+  try {
+    const res = await withTimeout(fetch(url), 4000, 'openFDA drug/ndc.json 조회');
+    if (res.status === 404) return null; // openFDA 는 검색 결과가 없으면 404 를 줘요(정상적인 "없음").
+    if (!res.ok) {
+      console.error(`[seon] openFDA drug/ndc.json 조회 실패 [HTTP ${res.status}]: '${term}'`);
+      return null;
+    }
+    json = await res.json();
+  } catch (err) {
+    // 네트워크 차단·타임아웃 등도 여기서 안전하게 잡아서 "미인식"으로 넘어가요(500 안 남).
+    console.error(`[seon] openFDA drug/ndc.json 조회 중 예외('${term}'):`, err.message);
+    return null;
+  }
+
+  const rec = json && Array.isArray(json.results) ? json.results[0] : null;
+  if (!rec) return null;
+
+  const brand = rec.brand_name || null;
+  const generic = rec.generic_name || null;
+  const ndcCode = rec.product_ndc || null;
+  const activeIngredients = Array.isArray(rec.active_ingredients) && rec.active_ingredients.length > 0
+    ? rec.active_ingredients.map(ai => ({ name: ai.name, strength: ai.strength || '' }))
+    : [{ name: generic || brand || term, strength: '' }];
+
+  console.log(`[seon] openFDA 에서 실시간으로 찾음: '${term}' -> '${brand || generic}' (NDC ${ndcCode || '없음'})`);
+
+  // fda_ndc_vet_dictionary 에 자동 저장(auto-seed)해요 — 다음 요청부터는 DB 조회만으로 바로
+  // 인식돼요. 이건 best-effort 예요: 컬럼 구성이 실제 운영 테이블과 다르면 저장이 실패할 수
+  // 있는데, 그래도 지금 이 요청 자체는 이미 openFDA 에서 정상적으로 찾은 결과라 그대로
+  // ndc_verified:true 로 응답해요(캐싱 실패가 이번 응답의 정확성에 영향을 주지 않아요).
+  if (supabase) {
+    try {
+      const { error: insertError } = await withTimeout(
+        supabase.from('fda_ndc_vet_dictionary').insert({
+          proprietary_name: brand || generic || term,
+          nonproprietary_name: generic || brand || term,
+          ndc_code: ndcCode,
+          product_type: 'HUMAN',
+          active_ingredients: activeIngredients
+        }),
+        3000,
+        'fda_ndc_vet_dictionary auto-seed 저장'
+      );
+      if (insertError) {
+        console.error(`[seon] auto-seed 저장 실패 [${insertError.code || 'NO_CODE'}]: ${insertError.message} — 테이블 컬럼 구성을 확인해주세요. (이번 응답 자체는 정상 반환돼요)`);
+      } else {
+        console.log(`[seon] fda_ndc_vet_dictionary 에 auto-seed 완료: '${brand || generic}' (NDC ${ndcCode})`);
+      }
+    } catch (err) {
+      console.error('[seon] auto-seed 저장 중 예외(이번 응답 자체는 정상 반환돼요):', err.message);
+    }
+  }
+
+  return {
+    name: drugInput,
+    ndc_code: ndcCode,
+    ndc_11: null,
+    ndc_source: 'openfda_live',
+    ndc_verified: true,
+    // openFDA drug/ndc.json 은 동물용 약을 포함하지 않는다고 명시돼 있어서(사람용 데이터셋),
+    // 여기서 찾은 건 전부 HUMAN 으로 정직하게 표시해요.
+    product_type: 'HUMAN',
+    proprietary_name: brand || generic || term,
+    active_ingredients: activeIngredients
+  };
 }
 
 // fda_ndc_vet_dictionary 를 대소문자 구분 없이 조회해요. proprietary_name 을 먼저 보고,
@@ -257,30 +345,51 @@ async function lookupDrugFromSupabaseDictionary(drugInput) {
     console.warn('[seon] Supabase 미연결 상태라 fda_ndc_vet_dictionary DB 조회를 건너뜁니다. SUPABASE_URL/SUPABASE_SERVICE_ROLE_KEY 환경변수를 확인해주세요.');
     return null;
   }
-
+  const term = drugInput.trim();
+  if (!term) return null;
   const columnsToTry = ['proprietary_name', 'nonproprietary_name'];
-  for (const column of columnsToTry) {
-    try {
-      const { data, error } = await withTimeout(
-        supabase.from('fda_ndc_vet_dictionary').select('*').ilike(column, drugInput).limit(1),
-        3000,
-        `fda_ndc_vet_dictionary(${column}) 조회`
-      );
 
-      if (error) {
-        // [강화된 에러 트래킹] 어떤 컬럼을 조회하다가, 어떤 코드/메시지로 실패했는지 정확히 남겨요.
-        console.error(`[seon] fda_ndc_vet_dictionary(${column}) 조회 실패 [${error.code || 'NO_CODE'}]: ${error.message}`);
-        continue;
-      }
-      if (data && data.length > 0) {
-        console.log(`[seon] fda_ndc_vet_dictionary(${column}) 매칭 성공: '${drugInput}' -> '${data[0].proprietary_name || data[0].nonproprietary_name}'`);
-        return mapDictionaryRowToDrugResult(data[0], drugInput);
-      }
-    } catch (err) {
-      // 네트워크 오류·타임아웃 등 supabase-js 가 던지는 예외까지 잡아서, 여기서 절대 500으로
-      // 새지 않고 다음 컬럼 시도 또는 "미인식"으로 안전하게 넘어가게 해요.
-      console.error(`[seon] fda_ndc_vet_dictionary(${column}) 조회 중 예외:`, err.message);
+  // 1차: 정확히 일치(대소문자 무관) — 가장 신뢰도 높은 매칭이라 먼저 시도해요.
+  for (const column of columnsToTry) {
+    const hit = await tryIlikeColumn(column, term, term);
+    if (hit) return hit;
+  }
+  // 2차: [보완] 앞뒤 와일드카드(%term%) 조회. "Apoquel Chewable Tablet"처럼 상표명 뒤에 제형
+  // 수식어가 붙어있거나, 괄호 잔여물·여분의 공백 때문에 완전 일치가 안 되는 1,011개 레코드
+  // 규모의 실제 DB에서 정확 일치만으로는 놓치는 경우를 위한 완화된 조회예요. 너무 짧은
+  // 검색어(2자 이하)는 엉뚱한 약과 광범위하게 매칭될 위험이 커서 3자 이상일 때만 적용해요.
+  if (term.length >= 3) {
+    for (const column of columnsToTry) {
+      const hit = await tryIlikeColumn(column, `%${term}%`, term);
+      if (hit) return hit;
     }
+  }
+  return null;
+}
+
+// ilike 조회 한 번을 실행해요. pattern 은 실제 ilike 에 넘길 값(와일드카드 포함/미포함),
+// displayTerm 은 로그·응답에 쓸 원래 검색어예요.
+async function tryIlikeColumn(column, pattern, displayTerm) {
+  try {
+    const { data, error } = await withTimeout(
+      supabase.from('fda_ndc_vet_dictionary').select('*').ilike(column, pattern).limit(1),
+      3000,
+      `fda_ndc_vet_dictionary(${column}) 조회`
+    );
+
+    if (error) {
+      // [강화된 에러 트래킹] 어떤 컬럼을 조회하다가, 어떤 코드/메시지로 실패했는지 정확히 남겨요.
+      console.error(`[seon] fda_ndc_vet_dictionary(${column}) 조회 실패 [${error.code || 'NO_CODE'}]: ${error.message}`);
+      return null;
+    }
+    if (data && data.length > 0) {
+      console.log(`[seon] fda_ndc_vet_dictionary(${column}, '${pattern}') 매칭 성공: '${displayTerm}' -> '${data[0].proprietary_name || data[0].nonproprietary_name}'`);
+      return mapDictionaryRowToDrugResult(data[0], displayTerm);
+    }
+  } catch (err) {
+    // 네트워크 오류·타임아웃 등 supabase-js 가 던지는 예외까지 잡아서, 여기서 절대 500으로
+    // 새지 않고 다음 컬럼 시도 또는 "미인식"으로 안전하게 넘어가게 해요.
+    console.error(`[seon] fda_ndc_vet_dictionary(${column}) 조회 중 예외:`, err.message);
   }
   return null;
 }
