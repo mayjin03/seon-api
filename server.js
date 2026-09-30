@@ -553,6 +553,75 @@ async function calculateMetabolicStrainIndices(prescriptions, supplements) {
   };
 }
 
+// [Goal Health Scoring] pet_bio 만으로 건강 스코어 · 하루 권장 칼로리 · 권장 음수량을 계산해요.
+// 프론트 진단 폼(index.html 의 computeResults / computeHealthScore)과 같은 공식을 써서,
+// 같은 입력이면 Sandbox 와 진단 폼 결과가 일치하도록 맞췄어요.
+// 칼로리·음수량은 추정 기본값을 쓰지 않아요. 필요한 값이 요청에 없으면 null 로 내려가요.
+//   - daily_calories_kcal: neutered(boolean) · activity('low'|'normal'|'high') 필요
+//   - daily_water_ml: 위 두 값 + food_kcal_per_100g(숫자) · food_texture('dry'|'wet'|'homemade'|'freezedried'|'raw') 필요
+const BREED_RISK_PENALTY = {
+  "닥스훈트": 4, "프렌치불독": 4, "골든리트리버": 3, "래브라도리트리버": 3, "웰시코기": 3,
+  "코카스파니엘": 2, "시베리안허스키": 2, "사모예드": 2, "말티즈": 2, "포메라니안": 2,
+  "요크셔테리어": 2, "비숑프리제": 2, "시츄": 2, "비글": 2, "잭러셀테리어": 1, "진돗개": 1, "보더콜리": 1
+};
+const FOOD_TEXTURE_MOISTURE = { dry: 10, wet: 75, homemade: 70, freezedried: 12, raw: 65 };
+
+function computeGoalHealthMetrics(petBio) {
+  const pet = petBio && typeof petBio === 'object' ? petBio : {};
+  const W = Number(pet.weight_kg);
+  const bcs = Number(pet.bcs);
+  if (!Number.isFinite(W) || W <= 0 || !Number.isFinite(bcs) || bcs < 1 || bcs > 9) return null;
+
+  const age = Number(pet.age_years) || 0;
+  const conditions = (Array.isArray(pet.conditions) ? pet.conditions : []).filter(c => c && c !== 'none');
+  const hasNeutered = typeof pet.neutered === 'boolean';
+  const hasActivity = ['low', 'normal', 'high'].includes(pet.activity);
+  const foodKcal = Number(pet.food_kcal_per_100g);
+  const hasFood = Number.isFinite(foodKcal) && foodKcal > 0 && pet.food_texture in FOOD_TEXTURE_MOISTURE;
+
+  // 칼로리: BCS 6 이상이면 이상체중(IBW) 기준 RER, 목표(감량/유지/증량)별 계수 적용
+  const IBW = W / (1 + (bcs - 5) * 0.1);
+  const RER = 70 * Math.pow(bcs >= 6 ? IBW : W, 0.75);
+  let MER = null;
+  if (hasNeutered && hasActivity) {
+    const { neutered, activity } = pet;
+    const maintainBase = (neutered ? 1.6 : 1.8) + (activity === 'high' ? 0.2 : activity === 'low' ? -0.2 : 0);
+    let factor;
+    if (bcs >= 6) {
+      const base = (activity === 'low' ? 0.80 : activity === 'high' ? 1.00 : 0.90) - (neutered ? 0.05 : 0);
+      factor = Math.min(1.0, Math.max(0.8, base));
+    } else if (bcs <= 3) {
+      factor = Math.min(2.5, Math.max(1.4, maintainBase + 0.3 + 0.2));
+    } else {
+      factor = Math.min(2.0, Math.max(1.4, maintainBase));
+    }
+    MER = RER * factor;
+  }
+
+  // 음수량: 사료 자체 수분(1g ≈ 1ml)만큼 차감, 최소 RER 의 15% 보장
+  let waterMl = null;
+  if (MER != null && hasFood) {
+    const dailyFoodG = (MER / foodKcal) * 100;
+    waterMl = Math.max(RER * 0.15, RER - dailyFoodG * (FOOD_TEXTURE_MOISTURE[pet.food_texture] / 100));
+  }
+
+  // 건강 스코어: BCS 편차 · 질환 수 · 나이 · 품종 소인 감점
+  let score = 100;
+  score -= Math.abs(bcs - 5) * 9;
+  score -= conditions.length * 6;
+  if (age >= 10) score -= 8;
+  else if (age >= 7) score -= 4;
+  score -= BREED_RISK_PENALTY[pet.breed] || 0;
+  score = Math.max(15, Math.min(100, Math.round(score)));
+
+  return {
+    health_score: score,
+    health_light: score >= 75 ? 'green' : score >= 50 ? 'yellow' : 'red',
+    daily_calories_kcal: MER == null ? null : Math.round(MER),
+    daily_water_ml: waterMl == null ? null : Math.round(waterMl)
+  };
+}
+
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
@@ -566,7 +635,7 @@ app.post('/v1/analyze', rateLimiter, authenticateApiKey, async (req, res) => {
   try {
     await ensureDrugDictionaryLoaded();
 
-    const { prescriptions = [], supplements = [] } = req.body;
+    const { prescriptions = [], supplements = [], pet_bio } = req.body;
 
     const analyzedPrescriptions = await Promise.all(
       prescriptions.map(async (item) => {
@@ -621,6 +690,11 @@ app.post('/v1/analyze', rateLimiter, authenticateApiKey, async (req, res) => {
       hepatic_status: strainMetrics.hepatic_status,
       renal_strain_index: strainMetrics.renal_strain_index,
       renal_status: strainMetrics.renal_status,
+
+      // pet_bio(체중·BCS)가 없거나 잘못되면 null 로 내려가요.
+      ...(computeGoalHealthMetrics(pet_bio) || {
+        health_score: null, health_light: null, daily_calories_kcal: null, daily_water_ml: null
+      }),
 
       prescriptions: analyzedPrescriptions,
       supplements: supplements
